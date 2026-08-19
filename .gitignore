@@ -1,0 +1,23 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# WhatsApp session database and temp files
+*.db
+*.db-wal
+*.db-shm
+whatsapp.db*
+
+# Environment file
+.env
+
+# OS / IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
