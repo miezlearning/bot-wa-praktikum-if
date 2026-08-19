@@ -16,11 +16,11 @@ func FormatHelp(prefix, webURL string) string {
 	sb.WriteString("Halo! Saya adalah bot asisten resmi Laboratorium Informatika ASCII.\n\n")
 	sb.WriteString("📋 *Daftar Perintah:*\n")
 	sb.WriteString(fmt.Sprintf("• `%sjadwal` - Cek jadwal praktikum aktif\n", prefix))
-	sb.WriteString(fmt.Sprintf("• `%skelas` [kode] - Cek daftar / detail kelas\n", prefix))
-	sb.WriteString(fmt.Sprintf("• `%smodul` [kata kunci] - Cari & download modul\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%skelas` [kode/matkul] - Cek daftar kelas\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%smodul` [kata kunci] - Cari & unduh modul praktikum\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%spengumuman` - Pengumuman lab terkini\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%sberita` - Berita & update praktikum\n", prefix))
-	sb.WriteString(fmt.Sprintf("• `%skontak` - Kontak Aslab & Koordinator\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%skontak` - Kontak & tautan resmi lab\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%saturan` - Tata tertib & aturan lab\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%sfaq` - Pertanyaan yang sering diajukan\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%sping` - Cek konektivitas bot & backend\n\n", prefix))
@@ -40,18 +40,51 @@ func FormatSchedules(items []asciiapi.ScheduleItem, webURL string) string {
 	sb.WriteString("📅 *JADWAL PRAKTIKUM LABORATORIUM ASCII*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
+	timeSlotNames := map[int]string{
+		1: "07:30 - 09:00",
+		2: "09:10 - 10:40",
+		3: "10:50 - 12:20",
+		4: "13:00 - 14:30",
+		5: "14:40 - 16:10",
+		6: "16:20 - 17:50",
+	}
+
 	for i, item := range items {
-		sb.WriteString(fmt.Sprintf("*%d. %s* (%s)\n", i+1, item.MataKuliah, item.KodeKelas))
-		sb.WriteString(fmt.Sprintf("   📆 Hari: %s\n", item.Hari))
-		sb.WriteString(fmt.Sprintf("   ⏰ Jam: %s\n", item.Jam))
-		if item.Ruang != "" {
-			sb.WriteString(fmt.Sprintf("   📍 Ruang: %s\n", item.Ruang))
+		course := item.Course
+		if course == "" {
+			course = item.MataKuliah
 		}
-		if item.Aslab != "" {
-			sb.WriteString(fmt.Sprintf("   👤 Aslab: %s\n", item.Aslab))
+		classCode := item.Class
+		if classCode == "" {
+			classCode = item.KodeKelas
 		}
-		if item.Dosen != "" {
-			sb.WriteString(fmt.Sprintf("   🎓 Dosen: %s\n", item.Dosen))
+		day := item.Day
+		if day == "" {
+			day = item.Hari
+		}
+		loc := item.Location
+		if loc == "" {
+			loc = item.Tempat
+		}
+
+		timeStr := item.Jam
+		if timeStr == "" && item.TimeSlot > 0 {
+			if slotStr, ok := timeSlotNames[item.TimeSlot]; ok {
+				timeStr = slotStr
+			} else {
+				timeStr = fmt.Sprintf("Sesi %d", item.TimeSlot)
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("*%d. %s* (%s)\n", i+1, course, classCode))
+		if day != "" {
+			sb.WriteString(fmt.Sprintf("   📆 Hari: %s\n", day))
+		}
+		if timeStr != "" {
+			sb.WriteString(fmt.Sprintf("   ⏰ Waktu: %s\n", timeStr))
+		}
+		if loc != "" {
+			sb.WriteString(fmt.Sprintf("   📍 Lokasi: %s\n", loc))
 		}
 		sb.WriteString("\n")
 	}
@@ -77,26 +110,24 @@ func FormatClasses(items []asciiapi.ClassItem, filter string, webURL string) str
 			f := strings.ToLower(filter)
 			matchKode := strings.Contains(strings.ToLower(item.KodeKelas), f)
 			matchMatkul := strings.Contains(strings.ToLower(item.MataKuliah), f)
-			matchAslab := strings.Contains(strings.ToLower(item.Aslab), f)
-			if !matchKode && !matchMatkul && !matchAslab {
+			matchNama := strings.Contains(strings.ToLower(item.NamaKelas), f)
+			if !matchKode && !matchMatkul && !matchNama {
 				continue
 			}
 		}
 
 		count++
-		sb.WriteString(fmt.Sprintf("*[%s] %s*\n", item.KodeKelas, item.MataKuliah))
-		if item.Hari != "" && item.Jam != "" {
-			sb.WriteString(fmt.Sprintf("   📆 Waktu: %s, %s\n", item.Hari, item.Jam))
+		title := item.MataKuliah
+		if item.NamaKelas != "" && item.NamaKelas != item.KodeKelas {
+			title = fmt.Sprintf("%s (%s)", item.MataKuliah, item.NamaKelas)
 		}
-		if item.Ruang != "" {
-			sb.WriteString(fmt.Sprintf("   📍 Ruang: %s\n", item.Ruang))
-		}
-		if item.Aslab != "" {
-			sb.WriteString(fmt.Sprintf("   👤 Aslab: %s\n", item.Aslab))
+		sb.WriteString(fmt.Sprintf("*[%s] %s*\n", item.KodeKelas, title))
+		if item.IsPilihan {
+			sb.WriteString("   🏷️ Mata Kuliah Pilihan\n")
 		}
 		sb.WriteString("\n")
 
-		if count >= 15 {
+		if count >= 20 {
 			sb.WriteString(fmt.Sprintf("_...dan %d kelas lainnya._\n\n", len(items)-count))
 			break
 		}
@@ -123,37 +154,45 @@ func FormatModul(items []asciiapi.ModulItem, filter string, webURL string) strin
 
 	count := 0
 	for _, m := range items {
+		title := m.Title
+		if title == "" {
+			title = "Modul Praktikum"
+		}
+
 		if filter != "" {
 			f := strings.ToLower(filter)
-			matchJudul := strings.Contains(strings.ToLower(m.Judul), f)
+			matchTitle := strings.Contains(strings.ToLower(title), f)
 			matchMatkul := strings.Contains(strings.ToLower(m.MataKuliah), f)
-			matchDeskripsi := strings.Contains(strings.ToLower(m.Deskripsi), f)
-			if !matchJudul && !matchMatkul && !matchDeskripsi {
+			matchDesc := strings.Contains(strings.ToLower(m.Description), f)
+			if !matchTitle && !matchMatkul && !matchDesc {
 				continue
 			}
 		}
 
 		count++
-		sb.WriteString(fmt.Sprintf("📌 *%s*\n", m.Judul))
+		sb.WriteString(fmt.Sprintf("📌 *%s*\n", title))
 		if m.MataKuliah != "" {
-			sb.WriteString(fmt.Sprintf("   📖 Matkul: %s\n", m.MataKuliah))
+			sb.WriteString(fmt.Sprintf("   📖 Mata Kuliah: %s\n", m.MataKuliah))
 		}
-		if m.Pertemuan > 0 {
-			sb.WriteString(fmt.Sprintf("   🔢 Pertemuan: %d\n", m.Pertemuan))
+		if m.Tahun > 0 {
+			sb.WriteString(fmt.Sprintf("   📅 Tahun: %d\n", m.Tahun))
 		}
-		if m.FileUrl != "" {
-			sb.WriteString(fmt.Sprintf("   📥 Unduh: %s\n", m.FileUrl))
+		if m.Description != "" {
+			sb.WriteString(fmt.Sprintf("   📝 %s\n", m.Description))
+		}
+		if m.DriveFileURL != "" {
+			sb.WriteString(fmt.Sprintf("   📥 Unduh: %s\n", m.DriveFileURL))
 		}
 		sb.WriteString("\n")
 
-		if count >= 12 {
+		if count >= 10 {
 			sb.WriteString(fmt.Sprintf("_...dan %d modul lainnya._\n\n", len(items)-count))
 			break
 		}
 	}
 
 	if count == 0 {
-		return fmt.Sprintf("ℹ️ Tidak ditemukan modul dengan kata kunci *\"%s\"*.", filter)
+		return fmt.Sprintf("ℹ️ Tidak ditemukan modul dengan kata kunci *\"%s\"*.\nKetik `!modul` untuk melihat daftar terbaru.", filter)
 	}
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
@@ -175,8 +214,18 @@ func FormatAnnouncements(items []asciiapi.AnnouncementItem, webURL string) strin
 		if i >= 5 {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, item.Judul))
-		sb.WriteString(fmt.Sprintf("%s\n\n", item.Isi))
+		title := item.Title
+		if title == "" {
+			title = "Pengumuman"
+		}
+		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, title))
+		if item.Description != "" {
+			sb.WriteString(fmt.Sprintf("%s\n", item.Description))
+		}
+		if item.Link != "" {
+			sb.WriteString(fmt.Sprintf("🔗 %s\n", item.Link))
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
@@ -198,11 +247,19 @@ func FormatBerita(items []asciiapi.BeritaItem, webURL string) string {
 		if i >= 4 {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, item.Judul))
-		if item.Ringkasan != "" {
-			sb.WriteString(fmt.Sprintf("   _%s_\n", item.Ringkasan))
+		title := item.Title
+		if title == "" {
+			title = "Berita Lab"
 		}
-		sb.WriteString(fmt.Sprintf("   🔗 %s/berita-praktikum/%s\n\n", webURL, item.Slug))
+		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, title))
+		if item.Description != "" {
+			sb.WriteString(fmt.Sprintf("   _%s_\n", item.Description))
+		}
+		if item.Slug != "" {
+			sb.WriteString(fmt.Sprintf("   🔗 %s/berita-praktikum/%s\n\n", webURL, item.Slug))
+		} else {
+			sb.WriteString("\n")
+		}
 	}
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
@@ -217,20 +274,30 @@ func FormatContacts(items []asciiapi.ContactItem, webURL string) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("📞 *KONTAK ASISTEN & KOORDINATOR LAB*\n")
+	sb.WriteString("📞 *KONTAK & TAUTAN RESMI LAB ASCII*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	for i, item := range items {
-		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, item.Nama))
-		sb.WriteString(fmt.Sprintf("   🏷️ Posisi/Peran: %s\n", item.Peran))
-		if item.Matkul != "" {
-			sb.WriteString(fmt.Sprintf("   📚 Mata Kuliah: %s\n", item.Matkul))
+		title := item.Title
+		if title == "" {
+			title = item.Platform
 		}
-		sb.WriteString(fmt.Sprintf("   📱 Kontak: %s\n\n", item.Kontak))
+		sb.WriteString(fmt.Sprintf("*%d. %s*", i+1, title))
+		if item.Platform != "" {
+			sb.WriteString(fmt.Sprintf(" (%s)", item.Platform))
+		}
+		sb.WriteString("\n")
+		if item.Description != "" {
+			sb.WriteString(fmt.Sprintf("   📝 %s\n", item.Description))
+		}
+		if item.URL != "" {
+			sb.WriteString(fmt.Sprintf("   🔗 %s\n", item.URL))
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	sb.WriteString(fmt.Sprintf("🔗 Hubungi via web: %s/kontak", webURL))
+	sb.WriteString(fmt.Sprintf("🔗 Kunjungi: %s/kontak", webURL))
 	return sb.String()
 }
 
@@ -245,8 +312,18 @@ func FormatAturan(items []asciiapi.AturanItem, webURL string) string {
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	for i, item := range items {
-		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, item.Judul))
-		sb.WriteString(fmt.Sprintf("%s\n\n", item.Deskripsi))
+		title := item.Title
+		if title == "" {
+			title = "Tata Tertib"
+		}
+		sb.WriteString(fmt.Sprintf("*%d. %s*\n", i+1, title))
+		if item.Description != "" {
+			sb.WriteString(fmt.Sprintf("   _%s_\n", item.Description))
+		}
+		if item.Content != "" {
+			sb.WriteString(fmt.Sprintf("%s\n", item.Content))
+		}
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
@@ -257,7 +334,7 @@ func FormatAturan(items []asciiapi.AturanItem, webURL string) string {
 // FormatFAQ formats FAQ items
 func FormatFAQ(items []asciiapi.FAQItem, webURL string) string {
 	if len(items) == 0 {
-		return "ℹ️ Belum ada daftar FAQ laboratorium."
+		return "ℹ️ Belum ada daftar FAQ laboratorium saat ini.\nKunjungi web: " + webURL
 	}
 
 	var sb strings.Builder
@@ -265,11 +342,17 @@ func FormatFAQ(items []asciiapi.FAQItem, webURL string) string {
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	for i, item := range items {
-		if i >= 6 {
+		if i >= 8 {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("*Q: %s*\n", item.Pertanyaan))
-		sb.WriteString(fmt.Sprintf("A: %s\n\n", item.Jawaban))
+		question := item.Title
+		if question == "" {
+			question = "Pertanyaan"
+		}
+		sb.WriteString(fmt.Sprintf("*Q: %s*\n", question))
+		if item.Description != "" {
+			sb.WriteString(fmt.Sprintf("A: %s\n\n", item.Description))
+		}
 	}
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")

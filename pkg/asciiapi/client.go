@@ -113,7 +113,36 @@ func (c *Client) GetAllModul() ([]ModulItem, error) {
 		return nil, fmt.Errorf("failed to parse modul json: %w", err)
 	}
 
+	// Try fetching mata kuliah names to enrich module data
+	courses, err := c.GetAllMataKuliah()
+	if err == nil && len(courses) > 0 {
+		courseMap := make(map[string]string)
+		for _, course := range courses {
+			courseMap[course.ID] = course.Name
+		}
+		for i := range moduls {
+			if name, ok := courseMap[moduls[i].MataKuliahID]; ok {
+				moduls[i].MataKuliah = name
+			}
+		}
+	}
+
 	return moduls, nil
+}
+
+// GetAllMataKuliah retrieves all courses
+func (c *Client) GetAllMataKuliah() ([]MataKuliahItem, error) {
+	data, err := c.doRequest(http.MethodGet, "/mataKuliah/getAll", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var courses []MataKuliahItem
+	if err := json.Unmarshal(data, &courses); err != nil {
+		return nil, fmt.Errorf("failed to parse mata kuliah json: %w", err)
+	}
+
+	return courses, nil
 }
 
 // GetAllAnnouncements retrieves announcements

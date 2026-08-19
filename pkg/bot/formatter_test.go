@@ -21,12 +21,11 @@ func TestFormatHelp(t *testing.T) {
 func TestFormatSchedules(t *testing.T) {
 	items := []asciiapi.ScheduleItem{
 		{
-			MataKuliah: "Pemrograman Web",
-			KodeKelas:  "IF-A",
-			Hari:       "Senin",
-			Jam:        "08:00 - 10:00",
-			Ruang:      "Lab 1",
-			Aslab:      "Miez",
+			Course:   "Pemrograman Web",
+			Class:    "IF-A",
+			Day:      "Senin",
+			TimeSlot: 2,
+			Location: "Lab 1",
 		},
 	}
 	formatted := FormatSchedules(items, "https://ascii.web.id")
@@ -40,14 +39,27 @@ func TestFormatClasses(t *testing.T) {
 		{
 			KodeKelas:  "IF-B",
 			MataKuliah: "Struktur Data",
-			Hari:       "Selasa",
-			Jam:        "10:00 - 12:00",
-			Aslab:      "Alex",
+			NamaKelas:  "Kelas B",
 		},
 	}
 	formatted := FormatClasses(items, "struktur", "https://ascii.web.id")
 	if !strings.Contains(formatted, "Struktur Data") {
 		t.Errorf("expected Struktur Data in filtered class output, got: %s", formatted)
+	}
+}
+
+func TestFormatModul(t *testing.T) {
+	items := []asciiapi.ModulItem{
+		{
+			Title:        "Modul 1: Pengenalan HTML",
+			MataKuliah:   "Pemrograman Web",
+			DriveFileURL: "https://drive.google.com/file/d/xyz/view",
+			Tahun:        2026,
+		},
+	}
+	formatted := FormatModul(items, "HTML", "https://ascii.web.id")
+	if !strings.Contains(formatted, "Modul 1: Pengenalan HTML") {
+		t.Errorf("expected module title in output, got: %s", formatted)
 	}
 }
 
