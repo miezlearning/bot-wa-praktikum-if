@@ -13,15 +13,8 @@ func DisplayQRCode(code string) {
 	fmt.Println("📱 SCAN QR CODE BERIKUT DENGAN APLIKASI WHATSAPP:")
 	fmt.Println("==================================================")
 
-	config := qrterminal.Config{
-		Level:     qrterminal.L,
-		Writer:    os.Stdout,
-		BlackChar: qrterminal.BLACK,
-		WhiteChar: qrterminal.WHITE,
-		QuietZone: 1,
-	}
+	qrterminal.GenerateHalfBlock(code, qrterminal.L, os.Stdout)
 
-	qrterminal.GenerateWithConfig(code, config)
 	fmt.Println("==================================================")
 	fmt.Println("Buka WhatsApp > Perangkat Tertaut > Tautkan Perangkat")
 	fmt.Println("==================================================")
