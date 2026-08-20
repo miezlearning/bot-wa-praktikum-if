@@ -115,27 +115,29 @@ func (c *Client) getDB() (*sql.DB, error) {
 		CREATE TABLE IF NOT EXISTS bot_wa_sessions (
 			sender_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
+			token TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);
+		ALTER TABLE bot_wa_sessions ADD COLUMN token TEXT;
 
 		CREATE TABLE IF NOT EXISTS mata_kuliah (
 			id TEXT PRIMARY KEY,
-			nama TEXT NOT NULL,
+			name TEXT NOT NULL,
 			singkatan TEXT,
-			semester INTEGER DEFAULT 1,
-			tahun INTEGER DEFAULT 2025
+			is_legend INTEGER DEFAULT 0,
+			is_pilihan INTEGER DEFAULT 0,
+			created_at INTEGER,
+			updated_at INTEGER
 		);
 
 		CREATE TABLE IF NOT EXISTS bimbingan_slot (
 			id TEXT PRIMARY KEY,
-			mata_kuliah_id TEXT,
 			aslab_id TEXT,
+			mata_kuliah_id TEXT,
 			kelas TEXT,
-			hari TEXT,
-			jam_mulai TEXT,
-			jam_selesai TEXT,
-			kuota INTEGER DEFAULT 5,
+			kuota INTEGER DEFAULT 3,
+			catatan_keahlian TEXT,
 			created_at INTEGER,
 			updated_at INTEGER
 		);
@@ -147,16 +149,17 @@ func (c *Client) getDB() (*sql.DB, error) {
 			nama_kelompok TEXT,
 			judul TEXT,
 			deskripsi TEXT,
-			bimbingan_slot_id TEXT,
+			slot_id TEXT,
 			flow_url TEXT,
 			repo_url TEXT,
-			status_konsul_0 TEXT DEFAULT 'belum',
+			status_konsul_0 TEXT DEFAULT 'pending',
 			catatan_konsul_0 TEXT,
-			status_konsul_1 TEXT DEFAULT 'belum',
+			status_konsul_1 TEXT DEFAULT 'pending',
 			catatan_konsul_1 TEXT,
-			status_konsul_2 TEXT DEFAULT 'belum',
+			status_konsul_2 TEXT DEFAULT 'pending',
 			catatan_konsul_2 TEXT,
 			is_acc_final INTEGER DEFAULT 0,
+			last_notified_at INTEGER,
 			created_at INTEGER,
 			updated_at INTEGER
 		);
@@ -174,6 +177,10 @@ func (c *Client) getDB() (*sql.DB, error) {
 
 		UPDATE user SET phone_number = NULL WHERE phone_number LIKE '15%' AND length(phone_number) >= 14;
 	`)
+
+	// Safe column migrations in case tables were created with legacy columns
+	_, _ = db.Exec("ALTER TABLE mata_kuliah ADD COLUMN name TEXT;")
+	_, _ = db.Exec("UPDATE mata_kuliah SET name = nama WHERE (name IS NULL OR name = '') AND nama IS NOT NULL;")
 
 	return db, nil
 }
@@ -236,21 +243,34 @@ func (c *Client) FindUserByPhone(phone string) (*UserInfo, error) {
 	return &u, nil
 }
 
-// GetBimbinganSummary retrieves bimbingan summary for the sender or search query
-func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResult, error) {
-	query = strings.TrimSpace(query)
+func (c *Client) getUserSession(phone string) (string, *UserInfo) {
+	caller, err := c.FindUserByPhone(phone)
+	if err != nil || caller == nil {
+		return "", caller
+	}
 
 	db, err := c.getDB()
 	if err != nil {
-		return nil, err
+		return "", caller
 	}
 	defer db.Close()
 
-	normPhone := NormalizePhoneNumber(phone)
-	var caller *UserInfo
-	if normPhone != "" {
-		caller, _ = c.FindUserByPhone(normPhone)
+	var token sql.NullString
+	raw := strings.TrimSpace(phone)
+	norm := NormalizePhoneNumber(phone)
+	_ = db.QueryRow("SELECT token FROM bot_wa_sessions WHERE sender_id = ? OR sender_id = ? LIMIT 1", raw, norm).Scan(&token)
+
+	if token.Valid && token.String != "" {
+		return token.String, caller
 	}
+	return "", caller
+}
+
+// GetBimbinganSummary retrieves bimbingan summary for the sender or search query
+func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResult, error) {
+	query = strings.TrimSpace(query)
+	normPhone := NormalizePhoneNumber(phone)
+	token, caller := c.getUserSession(phone)
 
 	result := &BimbinganSummaryResult{
 		Groups: make([]BimbinganGroupItem, 0),
@@ -263,6 +283,41 @@ func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResu
 		result.UserRole = caller.Role
 		result.UserPhone = caller.PhoneNumber
 	}
+
+	// 1. Try Live Web API first
+	if (token != "" || c.apiKey != "") && query == "" && caller != nil {
+		endpoint := "/bimbingan/mentees"
+		if caller.Role == "praktikan" {
+			endpoint = "/bimbingan/my"
+		}
+		respBytes, err := c.doRequestWithAuth(http.MethodGet, endpoint, nil, token)
+		if err == nil {
+			var groups []BimbinganGroupItem
+			if err := json.Unmarshal(respBytes, &groups); err == nil && len(groups) > 0 {
+				for i := range groups {
+					if len(groups[i].ID) >= 6 {
+						groups[i].ShortID = groups[i].ID[:6]
+					} else {
+						groups[i].ShortID = groups[i].ID
+					}
+				}
+				result.Groups = groups
+				if caller.Role == "aslab" || caller.Role == "pengurus" || caller.Role == "koordinator" {
+					result.Mode = "mentees"
+				} else {
+					result.Mode = "my_group"
+				}
+				return result, nil
+			}
+		}
+	}
+
+	// 2. Fallback to Local SQLite DB
+	db, err := c.getDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
 
 	// Case 1: Search query provided
 	if query != "" {
@@ -644,52 +699,58 @@ func (c *Client) ReviewKonsul(params ReviewKonsulParams) (*ReviewKonsulResult, e
 		return nil, fmt.Errorf("status harus 'acc', 'revisi', atau 'pending'")
 	}
 
+	// 1. Sync to Live Web API if session token / apiKey is present
+	token, _ := c.getUserSession(params.SenderPhone)
+	if token != "" || c.apiKey != "" {
+		payload, _ := json.Marshal(map[string]interface{}{
+			"groupId": group.ID,
+			"stage":   params.Stage,
+			"status":  status,
+			"catatan": params.Catatan,
+		})
+		_, _ = c.doRequestWithAuth(http.MethodPost, "/bimbingan/konsul-review", bytes.NewReader(payload), token)
+	}
+
+	// 2. Update local database
 	db, err := c.getDB()
-	if err != nil {
-		return nil, err
+	if err == nil {
+		defer db.Close()
+		now := time.Now().UnixMilli()
+
+		var updateColStatus, updateColCatatan string
+		switch params.Stage {
+		case 0:
+			updateColStatus = "status_konsul_0"
+			updateColCatatan = "catatan_konsul_0"
+		case 1:
+			updateColStatus = "status_konsul_1"
+			updateColCatatan = "catatan_konsul_1"
+		case 2:
+			updateColStatus = "status_konsul_2"
+			updateColCatatan = "catatan_konsul_2"
+		}
+
+		updateQuery := fmt.Sprintf(`
+			UPDATE bimbingan_group
+			SET %s = ?, %s = ?, updated_at = ?
+			WHERE id = ?
+		`, updateColStatus, updateColCatatan)
+
+		_, _ = db.Exec(updateQuery, status, params.Catatan, now, group.ID)
 	}
-	defer db.Close()
 
-	now := time.Now().UnixMilli()
-
-	var updateColStatus, updateColCatatan string
 	var stageName string
-
 	switch params.Stage {
 	case 0:
-		updateColStatus = "status_konsul_0"
-		updateColCatatan = "catatan_konsul_0"
 		stageName = "Konsul 0 (Konsep & Judul)"
-	case 1:
-		updateColStatus = "status_konsul_1"
-		updateColCatatan = "catatan_konsul_1"
-		stageName = "Konsul 1 (Flow Program & Desain)"
-	case 2:
-		updateColStatus = "status_konsul_2"
-		updateColCatatan = "catatan_konsul_2"
-		stageName = "Konsul 2 (70% Koding & Implementasi)"
-	}
-
-	updateQuery := fmt.Sprintf(`
-		UPDATE bimbingan_group
-		SET %s = ?, %s = ?, updated_at = ?
-		WHERE id = ?
-	`, updateColStatus, updateColCatatan)
-
-	_, err = db.Exec(updateQuery, status, params.Catatan, now, group.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gagal memperbarui status di database: %w", err)
-	}
-
-	// Update in-memory group state
-	switch params.Stage {
-	case 0:
 		group.StatusKonsul0 = status
 		group.CatatanKonsul0 = params.Catatan
 	case 1:
+		stageName = "Konsul 1 (Flow Program & Desain)"
 		group.StatusKonsul1 = status
 		group.CatatanKonsul1 = params.Catatan
 	case 2:
+		stageName = "Konsul 2 (70% Koding & Implementasi)"
 		group.StatusKonsul2 = status
 		group.CatatanKonsul2 = params.Catatan
 	}
@@ -726,28 +787,33 @@ func (c *Client) ToggleAccFinal(params AccFinalParams) (*ReviewKonsulResult, err
 		return nil, err
 	}
 
+	// 1. Sync to Live Web API
+	token, _ := c.getUserSession(params.SenderPhone)
+	if token != "" || c.apiKey != "" {
+		payload, _ := json.Marshal(map[string]interface{}{
+			"groupId":    group.ID,
+			"isAccFinal": params.IsAccFinal,
+		})
+		_, _ = c.doRequestWithAuth(http.MethodPost, "/bimbingan/acc-final", bytes.NewReader(payload), token)
+	}
+
+	// 2. Update local DB
 	db, err := c.getDB()
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	if err == nil {
+		defer db.Close()
+		now := time.Now().UnixMilli()
 
-	now := time.Now().UnixMilli()
+		isAccInt := 0
+		if params.IsAccFinal {
+			isAccInt = 1
+		}
 
-	isAccInt := 0
-	if params.IsAccFinal {
-		isAccInt = 1
-	}
-
-	// If ACC Final is true, automatically set all stages to 'acc'
-	updateQuery := `
-		UPDATE bimbingan_group
-		SET is_acc_final = ?, status_konsul_0 = 'acc', status_konsul_1 = 'acc', status_konsul_2 = 'acc', updated_at = ?
-		WHERE id = ?
-	`
-	_, err = db.Exec(updateQuery, isAccInt, now, group.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gagal memperbarui ACC Final di database: %w", err)
+		updateQuery := `
+			UPDATE bimbingan_group
+			SET is_acc_final = ?, status_konsul_0 = 'acc', status_konsul_1 = 'acc', status_konsul_2 = 'acc', updated_at = ?
+			WHERE id = ?
+		`
+		_, _ = db.Exec(updateQuery, isAccInt, now, group.ID)
 	}
 
 	group.IsAccFinal = params.IsAccFinal
@@ -796,7 +862,13 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 
 	respBytes, err := c.doRequest(http.MethodPost, "/login", bytes.NewReader(loginPayload))
 	var authUser struct {
-		User struct {
+		Session struct {
+			Token     string `json:"token"`
+			ExpiresAt int64  `json:"expiresAt"`
+			ID        string `json:"id"`
+		} `json:"session"`
+		Token string `json:"token"`
+		User  struct {
 			ID          string `json:"id"`
 			Name        string `json:"name"`
 			Email       string `json:"email"`
@@ -845,7 +917,15 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 		return nil, fmt.Errorf("autentikasi gagal. Periksa kembali NIM dan password Anda")
 	}
 
-	// 3. Link session in local database
+	// 3. Link session in local database with token
+	sessionToken := authUser.Session.Token
+	if sessionToken == "" {
+		sessionToken = authUser.Token
+	}
+	if sessionToken == "" {
+		sessionToken = authUser.Session.ID
+	}
+
 	db, dbErr := c.getDB()
 	if dbErr == nil {
 		defer db.Close()
@@ -869,17 +949,17 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 		`, matchedUser.ID, matchedUser.Name, matchedUser.Email, matchedUser.Username, matchedUser.Role, matchedUser.PhoneNumber, now, now)
 
 		_, _ = db.Exec(`
-			INSERT INTO bot_wa_sessions (sender_id, user_id, created_at, updated_at)
-			VALUES (?, ?, ?, ?)
-			ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at
-		`, raw, matchedUser.ID, now, now)
+			INSERT INTO bot_wa_sessions (sender_id, user_id, token, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, token = excluded.token, updated_at = excluded.updated_at
+		`, raw, matchedUser.ID, sessionToken, now, now)
 
 		if norm != "" && norm != raw {
 			_, _ = db.Exec(`
-				INSERT INTO bot_wa_sessions (sender_id, user_id, created_at, updated_at)
-				VALUES (?, ?, ?, ?)
-				ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at
-			`, norm, matchedUser.ID, now, now)
+				INSERT INTO bot_wa_sessions (sender_id, user_id, token, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, token = excluded.token, updated_at = excluded.updated_at
+			`, norm, matchedUser.ID, sessionToken, now, now)
 		}
 	}
 

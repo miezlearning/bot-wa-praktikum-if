@@ -37,6 +37,10 @@ func (c *Client) WebURL() string {
 }
 
 func (c *Client) doRequest(method, endpoint string, body io.Reader) ([]byte, error) {
+	return c.doRequestWithAuth(method, endpoint, body, "")
+}
+
+func (c *Client) doRequestWithAuth(method, endpoint string, body io.Reader, token string) ([]byte, error) {
 	url := fmt.Sprintf("%s/%s", c.baseURL, strings.TrimLeft(endpoint, "/"))
 
 	req, err := http.NewRequest(method, url, body)
@@ -45,7 +49,14 @@ func (c *Client) doRequest(method, endpoint string, body io.Reader) ([]byte, err
 	}
 
 	req.Header.Set("Accept", "application/json")
-	if c.apiKey != "" {
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+		req.Header.Set("Cookie", fmt.Sprintf("better-auth.session_token=%s", token))
+	} else if c.apiKey != "" {
 		req.Header.Set("x-api-key", c.apiKey)
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 	}
