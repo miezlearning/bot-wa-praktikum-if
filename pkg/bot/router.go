@@ -163,12 +163,18 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 
 	switch cmd {
 	case "help", "menu", "start":
-		reply := FormatHelp(r.cfg.BotPrefix, r.apiClient.WebURL())
+		currentUser, _ := r.apiClient.FindUserByPhone(senderPhone)
+		reply := FormatHelp(r.cfg.BotPrefix, r.apiClient.WebURL(), currentUser)
 		r.SendMessage(target, reply)
 
 	case "login", "masuk", "auth":
+		existing, _ := r.apiClient.FindUserByPhone(senderPhone)
 		parts := strings.Fields(args)
 		if len(parts) < 2 {
+			if existing != nil {
+				r.SendMessage(target, fmt.Sprintf("ℹ️ *Anda Sudah Login!*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n• *Nama:* %s\n• *NIM / Username:* %s\n• *Peran (Role):* %s\n• *Status:* 🟢 Terhubung & Aktif\n\n_Ketik `%slogout` terlebih dahulu jika ingin mengganti akun lain._", existing.Name, existing.Username, roleLabel(existing.Role), r.cfg.BotPrefix))
+				return
+			}
 			guide := fmt.Sprintf("⚠️ *Format Perintah Login:*\n`%slogin <NIM> <Password>`\n\n*Contoh:*\n`%slogin 2101552001 Password123`\n\n_Akun portal praktikum ASCII Anda akan otomatis ditautkan ke nomor WhatsApp ini secara permanen._", r.cfg.BotPrefix, r.cfg.BotPrefix)
 			r.SendMessage(target, guide)
 			return
@@ -187,6 +193,11 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 		r.SendMessage(target, reply)
 
 	case "logout", "keluar":
+		existing, _ := r.apiClient.FindUserByPhone(senderPhone)
+		if existing == nil {
+			r.SendMessage(target, fmt.Sprintf("ℹ️ *Anda Belum Login*\nNomor WhatsApp ini belum tertaut dengan akun portal manapun.\n\nKetik `%slogin <NIM> <password>` untuk masuk.", r.cfg.BotPrefix))
+			return
+		}
 		u, err := r.apiClient.LogoutUser(senderPhone)
 		if err != nil {
 			r.SendMessage(target, "❌ "+err.Error())
@@ -195,7 +206,7 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 		reply := FormatLogoutSuccess(u)
 		r.SendMessage(target, reply)
 
-	case "profil", "profile", "whoami", "akun", "me", "foto", "photo":
+	case "profil", "profile", "whoami", "akun", "me", "status", "foto", "photo":
 		if strings.TrimSpace(args) != "" {
 			targetNIM := strings.TrimSpace(args)
 			photo, err := FetchStudentPhoto(targetNIM)
@@ -235,6 +246,16 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 		r.SendMessage(target, reply)
 
 	case "revisi", "rev":
+		caller, _ := r.apiClient.FindUserByPhone(senderPhone)
+		if caller == nil {
+			r.SendMessage(target, fmt.Sprintf("🔒 *Akses Ditolak (Belum Login)*\nAnda harus login sebagai Asisten Laboratorium terlebih dahulu untuk dapat memberikan revisi.\n\n👉 Ketik: `%slogin <NIM> <password>`", r.cfg.BotPrefix))
+			return
+		}
+		if caller.Role != "aslab" && caller.Role != "pengurus" && caller.Role != "koordinator" && caller.Role != "dosen" && caller.Role != "admin" {
+			r.SendMessage(target, fmt.Sprintf("🔒 *Akses Ditolak*\nAkun Anda terdaftar sebagai *%s*. Perintah ini khusus untuk Asisten Laboratorium.", roleLabel(caller.Role)))
+			return
+		}
+
 		parts := strings.Fields(args)
 		if len(parts) < 3 {
 			guide := fmt.Sprintf("⚠️ *Format Perintah Revisi:*\n`%srevisi <No/ID_Kelompok> <Tahap: 0/1/2> <Catatan revisi>`\n\n*Contoh:*\n• `%srevisi 1 0 Judul terlalu luas, tolong batasi ruang lingkupnya.`\n• `%srevisi 1 1 Flowchart perbaiki modul auth.`\n• `%srevisi 1 2 Fitur upload berkas belum selesai.`\n\n*Keterangan Tahap:*\n• `0` = Konsul 0 (Konsep & Judul)\n• `1` = Konsul 1 (Flow Program & Desain)\n• `2` = Konsul 2 (70%% Koding & Implementasi)\n\n_Ketik `%sbimbingan` untuk melihat nomor urut & ID kelompok bimbingan Anda._", r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix)
@@ -287,6 +308,16 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 		}
 
 	case "acc":
+		caller, _ := r.apiClient.FindUserByPhone(senderPhone)
+		if caller == nil {
+			r.SendMessage(target, fmt.Sprintf("🔒 *Akses Ditolak (Belum Login)*\nAnda harus login sebagai Asisten Laboratorium terlebih dahulu untuk dapat menyetujui (ACC) asistensi.\n\n👉 Ketik: `%slogin <NIM> <password>`", r.cfg.BotPrefix))
+			return
+		}
+		if caller.Role != "aslab" && caller.Role != "pengurus" && caller.Role != "koordinator" && caller.Role != "dosen" && caller.Role != "admin" {
+			r.SendMessage(target, fmt.Sprintf("🔒 *Akses Ditolak*\nAkun Anda terdaftar sebagai *%s*. Perintah ini khusus untuk Asisten Laboratorium.", roleLabel(caller.Role)))
+			return
+		}
+
 		parts := strings.Fields(args)
 		if len(parts) < 2 {
 			guide := fmt.Sprintf("⚠️ *Format Perintah ACC:*\n`%sacc <No/ID_Kelompok> <Tahap: 0/1/2> [Catatan opsional]`\n\n*Contoh:*\n• `%sacc 1 0 Konsep & judul disetujui, lanjut flowchart.`\n• `%sacc 1 1 Flowchart sudah baik, lanjut koding 70%%.`\n• `%sacc 1 2 Progres koding sesuai, siap demo.`\n\n*Keterangan Tahap:*\n• `0` = Konsul 0 (Konsep & Judul)\n• `1` = Konsul 1 (Flow Program & Desain)\n• `2` = Konsul 2 (70%% Koding & Implementasi)\n\n_Ketik `%sbimbingan` untuk melihat nomor urut & ID kelompok bimbingan Anda._", r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix)
@@ -338,6 +369,16 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 		}
 
 	case "accfinal", "acctubes", "accproyek":
+		caller, _ := r.apiClient.FindUserByPhone(senderPhone)
+		if caller == nil {
+			r.SendMessage(target, fmt.Sprintf("🔒 *Akses Ditolak (Belum Login)*\nAnda harus login sebagai Asisten Laboratorium terlebih dahulu untuk dapat memberikan ACC Final.\n\n👉 Ketik: `%slogin <NIM> <password>`", r.cfg.BotPrefix))
+			return
+		}
+		if caller.Role != "aslab" && caller.Role != "pengurus" && caller.Role != "koordinator" && caller.Role != "dosen" && caller.Role != "admin" {
+			r.SendMessage(target, fmt.Sprintf("🔒 *Akses Ditolak*\nAkun Anda terdaftar sebagai *%s*. Perintah ini khusus untuk Asisten Laboratorium.", roleLabel(caller.Role)))
+			return
+		}
+
 		parts := strings.Fields(args)
 		if len(parts) < 1 {
 			guide := fmt.Sprintf("⚠️ *Format Perintah ACC Final:*\n`%saccfinal <No/ID_Kelompok> [Catatan opsional]`\n\n*Contoh:*\n• `%saccfinal 1 Proyek siap untuk demo praktikum.`\n• `%saccfinal KEL-01`\n\n_Ketik `%sbimbingan` untuk melihat nomor urut & ID kelompok bimbingan Anda._", r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix)
@@ -363,7 +404,7 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 			return
 		}
 
-		reply := FormatAccFinalSuccess(res, r.apiClient.WebURL())
+		reply := FormatReviewSuccess(res, r.apiClient.WebURL())
 		r.SendMessage(target, reply)
 
 		// Dispatch notifications to students asynchronously
@@ -374,7 +415,7 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 						continue
 					}
 					studentJID := types.NewJID(m.PhoneNumber, types.DefaultUserServer)
-					msg := FormatStudentAccFinalNotification(result.Group, result.AslabName, note, r.apiClient.WebURL())
+					msg := FormatStudentReviewNotification(result.Group, result.AslabName, result.StageName, "accfinal", note, r.apiClient.WebURL())
 					_ = r.SendMessage(studentJID, msg)
 					time.Sleep(300 * time.Millisecond)
 				}

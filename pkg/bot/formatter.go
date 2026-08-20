@@ -8,12 +8,26 @@ import (
 	"botwa_go_ascii/pkg/asciiapi"
 )
 
-// FormatHelp builds the help/menu message
-func FormatHelp(prefix, webURL string) string {
+// FormatHelp builds the help/menu message with dynamic user login status
+func FormatHelp(prefix, webURL string, user ...*asciiapi.UserInfo) string {
+	var currentUser *asciiapi.UserInfo
+	if len(user) > 0 {
+		currentUser = user[0]
+	}
+
 	var sb strings.Builder
 	sb.WriteString("🤖 *ASCII INFORMATIKA BOT (WHATSAPP)*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	sb.WriteString("Halo! Saya adalah bot asisten resmi Laboratorium Informatika ASCII.\n\n")
+	if currentUser != nil {
+		roleEmoji := "👨‍💻"
+		if currentUser.Role == "aslab" || currentUser.Role == "pengurus" || currentUser.Role == "koordinator" {
+			roleEmoji = "👨‍🏫"
+		}
+		sb.WriteString(fmt.Sprintf("👤 *Status Akun:* 🟢 Terhubung\n   %s *%s* (%s - %s)\n\n", roleEmoji, currentUser.Name, currentUser.Username, roleLabel(currentUser.Role)))
+	} else {
+		sb.WriteString(fmt.Sprintf("👤 *Status Akun:* ⚪ Belum Login\n   _Ketik `%slogin <NIM> <password>` untuk menghubungkan akun_\n\n", prefix))
+	}
+
 	sb.WriteString("📋 *Menu & Navigasi Cepat:*\n")
 	sb.WriteString(fmt.Sprintf("*[1]* 👥 *Bimbingan Praktikum* (`%sbimbingan`)\n", prefix))
 	sb.WriteString("     _Cek kelompok bimbingan & status asistensi_\n")
