@@ -296,27 +296,46 @@ func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResu
 		normPhone = strings.TrimSpace(phone)
 	}
 
-	// 1. Try Live Web API first (/bot/bimbingan/summary)
+	// 1. Ambil data sesi login lokal pengirim terlebih dahulu
+	token, caller := c.getUserSession(phone)
+	if caller == nil {
+		caller, _ = c.FindUserByPhone(phone)
+	}
+
+	// 2. Request ke Live Web API dengan menyertakan userId jika sudah login
 	if c.baseURL != "" {
-		reqURL := fmt.Sprintf("/bot/bimbingan/summary?phone=%s&query=%s", url.QueryEscape(normPhone), url.QueryEscape(query))
-		respBytes, err := c.doRequestWithAuth(http.MethodGet, reqURL, nil, "")
+		reqURL := fmt.Sprintf("/bot/bimbingan/summary?query=%s", url.QueryEscape(query))
+		if caller != nil {
+			reqURL += fmt.Sprintf("&userId=%s", url.QueryEscape(caller.ID))
+			if caller.PhoneNumber != "" {
+				reqURL += fmt.Sprintf("&phone=%s", url.QueryEscape(caller.PhoneNumber))
+			} else {
+				reqURL += fmt.Sprintf("&phone=%s", url.QueryEscape(normPhone))
+			}
+		} else {
+			reqURL += fmt.Sprintf("&phone=%s", url.QueryEscape(normPhone))
+		}
+
+		respBytes, err := c.doRequestWithAuth(http.MethodGet, reqURL, nil, token)
 		if err == nil {
 			var result BimbinganSummaryResult
-			if err := json.Unmarshal(respBytes, &result); err == nil && (result.UserFound || len(result.Groups) > 0 || result.Mode != "") {
-				for i := range result.Groups {
-					if len(result.Groups[i].ID) >= 6 {
-						result.Groups[i].ShortID = result.Groups[i].ID[:6]
-					} else {
-						result.Groups[i].ShortID = result.Groups[i].ID
+			if err := json.Unmarshal(respBytes, &result); err == nil {
+				// Abaikan 'not_registered' jika caller sudah terverifikasi di sesi lokal
+				if result.UserFound || len(result.Groups) > 0 || (query != "" && result.Mode == "search") || (caller == nil && result.Mode == "not_registered") {
+					for i := range result.Groups {
+						if len(result.Groups[i].ID) >= 6 {
+							result.Groups[i].ShortID = result.Groups[i].ID[:6]
+						} else {
+							result.Groups[i].ShortID = result.Groups[i].ID
+						}
 					}
+					return &result, nil
 				}
-				return &result, nil
 			}
 		}
 	}
 
-	token, caller := c.getUserSession(phone)
-
+	// 3. Fallback ke database lokal jika Web API tidak merespon / offline
 	result := &BimbinganSummaryResult{
 		Groups: make([]BimbinganGroupItem, 0),
 	}
@@ -329,46 +348,15 @@ func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResu
 		result.UserPhone = caller.PhoneNumber
 	}
 
-	// 1. Try Live Web API first
-	if (token != "" || c.apiKey != "") && query == "" && caller != nil {
-		endpoint := "/bimbingan/mentees"
-		if caller.Role == "praktikan" {
-			endpoint = "/bimbingan/my"
-		}
-		respBytes, err := c.doRequestWithAuth(http.MethodGet, endpoint, nil, token)
-		if err == nil {
-			var groups []BimbinganGroupItem
-			if err := json.Unmarshal(respBytes, &groups); err == nil && len(groups) > 0 {
-				for i := range groups {
-					if len(groups[i].ID) >= 6 {
-						groups[i].ShortID = groups[i].ID[:6]
-					} else {
-						groups[i].ShortID = groups[i].ID
-					}
-				}
-				result.Groups = groups
-				if caller.Role == "aslab" || caller.Role == "pengurus" || caller.Role == "koordinator" {
-					result.Mode = "mentees"
-				} else {
-					result.Mode = "my_group"
-				}
-				return result, nil
-			}
-		}
-	}
-
-	// 2. Fallback to Local SQLite DB
 	db, err := c.getDB()
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	// Case 1: Search query provided
 	if query != "" {
 		result.Mode = "search"
 		result.SearchQuery = query
-
 		groups, err := c.searchGroupsDB(db, query)
 		if err != nil {
 			return nil, err
@@ -377,34 +365,28 @@ func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResu
 		return result, nil
 	}
 
-	// Case 2: No query, look up by caller phone
 	if caller == nil {
 		result.Mode = "not_registered"
 		result.UserPhone = normPhone
 		return result, nil
 	}
 
-	// Case 2A: Aslab / Pengurus / Koordinator -> Fetch mentees
 	if caller.Role == "aslab" || caller.Role == "pengurus" || caller.Role == "koordinator" {
 		result.Mode = "mentees"
 		groups, err := c.getAslabMenteesDB(db, caller.ID)
 		if err != nil {
 			return nil, err
 		}
-
-		// If pengurus/koordinator and no directly mentored groups, fetch recent active groups
 		if len(groups) == 0 && (caller.Role == "pengurus" || caller.Role == "koordinator") {
 			groups, err = c.getAllActiveGroupsDB(db)
 			if err != nil {
 				return nil, err
 			}
 		}
-
 		result.Groups = groups
 		return result, nil
 	}
 
-	// Case 2B: Praktikan -> Fetch their own groups
 	result.Mode = "my_group"
 	groups, err := c.getMyGroupsDB(db, caller.ID, caller.Username, normPhone)
 	if err != nil {
