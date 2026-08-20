@@ -19,6 +19,7 @@ type Config struct {
 	AsciiAPIURL  string
 	AsciiAPIKey  string
 	AsciiWebURL  string
+	AsciiDBPath  string
 
 	// Webhook / HTTP Server
 	ServerPort   int
@@ -40,6 +41,7 @@ func LoadConfig() *Config {
 		AsciiAPIURL:  getEnv("ASCII_API_URL", "http://localhost:3000/api"),
 		AsciiAPIKey:  getEnv("ASCII_API_KEY", ""),
 		AsciiWebURL:  getEnv("ASCII_WEB_URL", "https://ascii.web.id"),
+		AsciiDBPath:  getEnv("ASCII_DB_PATH", "../ascii-if/local.db"),
 		ServerPort:   getEnvInt("SERVER_PORT", 8080),
 		BotSecret:    getEnv("BOT_SECRET", "ascii-secret-bot-key"),
 		EnableServer: getEnvBool("ENABLE_SERVER", true),

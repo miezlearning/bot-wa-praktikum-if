@@ -15,6 +15,7 @@ type Client struct {
 	baseURL    string
 	apiKey     string
 	webURL     string
+	dbPath     string
 	httpClient *http.Client
 }
 
@@ -24,6 +25,7 @@ func NewClient(cfg *config.Config) *Client {
 		baseURL: baseURL,
 		apiKey:  cfg.AsciiAPIKey,
 		webURL:  strings.TrimRight(cfg.AsciiWebURL, "/"),
+		dbPath:  cfg.AsciiDBPath,
 		httpClient: &http.Client{
 			Timeout: 12 * time.Second,
 		},

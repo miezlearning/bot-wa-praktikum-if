@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,22 +59,219 @@ func (r *Router) HandleMessage(evt *events.Message) {
 	args := parts[1:]
 	argStr := strings.Join(args, " ")
 
-	sender := evt.Info.Sender.User
+	senderPhone := evt.Info.Sender.User
+	sender := senderPhone
 	if evt.Info.PushName != "" {
 		sender = fmt.Sprintf("%s (%s)", evt.Info.PushName, sender)
 	}
 	log.Printf("[Bot] Received command '%s' with args '%s' from %s", cmd, argStr, sender)
 
-	r.dispatch(evt.Info.Chat, cmd, argStr)
+	r.dispatch(evt.Info.Chat, senderPhone, cmd, argStr)
 }
 
-func (r *Router) dispatch(target types.JID, cmd, args string) {
+func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 	start := time.Now()
 
 	switch cmd {
 	case "help", "menu", "start":
 		reply := FormatHelp(r.cfg.BotPrefix, r.apiClient.WebURL())
 		r.SendMessage(target, reply)
+
+	case "login", "masuk", "auth":
+		parts := strings.Fields(args)
+		if len(parts) < 2 {
+			guide := fmt.Sprintf("⚠️ *Format Perintah Login:*\n`%slogin <NIM> <Password>`\n\n*Contoh:*\n`%slogin 2101552001 Password123`\n\n_Akun portal praktikum ASCII Anda akan otomatis ditautkan ke nomor WhatsApp ini secara permanen._", r.cfg.BotPrefix, r.cfg.BotPrefix)
+			r.SendMessage(target, guide)
+			return
+		}
+
+		nim := parts[0]
+		password := parts[1]
+		u, err := r.apiClient.LoginUser(senderPhone, nim, password)
+		if err != nil {
+			log.Printf("[Bot] Login error for %s: %v", nim, err)
+			r.SendMessage(target, "❌ Gagal login: "+err.Error())
+			return
+		}
+
+		reply := FormatLoginSuccess(u, r.cfg.BotPrefix, r.apiClient.WebURL())
+		r.SendMessage(target, reply)
+
+	case "logout", "keluar":
+		u, err := r.apiClient.LogoutUser(senderPhone)
+		if err != nil {
+			r.SendMessage(target, "❌ "+err.Error())
+			return
+		}
+		reply := FormatLogoutSuccess(u)
+		r.SendMessage(target, reply)
+
+	case "profil", "profile", "whoami", "akun", "me":
+		u, err := r.apiClient.GetProfile(senderPhone)
+		if err != nil {
+			log.Printf("[Bot] Profile fetch error: %v", err)
+			r.SendMessage(target, "❌ Gagal memuat profil: "+err.Error())
+			return
+		}
+		reply := FormatProfile(u, r.cfg.BotPrefix, r.apiClient.WebURL())
+		r.SendMessage(target, reply)
+
+	case "bimbingan", "bimbing", "mentee", "mentees", "progres", "tubes", "tugasbesar":
+		summary, err := r.apiClient.GetBimbinganSummary(senderPhone, args)
+		if err != nil {
+			log.Printf("[Bot] Error fetching bimbingan summary: %v", err)
+			r.SendMessage(target, "❌ Gagal memuat data bimbingan: "+err.Error())
+			return
+		}
+		reply := FormatBimbinganSummary(summary, r.cfg.BotPrefix, r.apiClient.WebURL())
+		r.SendMessage(target, reply)
+
+	case "revisi", "rev":
+		parts := strings.Fields(args)
+		if len(parts) < 3 {
+			guide := fmt.Sprintf("⚠️ *Format Perintah Revisi:*\n`%srevisi <No/ID_Kelompok> <Tahap: 0/1/2> <Catatan revisi>`\n\n*Contoh:*\n• `%srevisi 1 0 Judul terlalu luas, tolong batasi ruang lingkupnya.`\n• `%srevisi 1 1 Flowchart perbaiki modul auth.`\n• `%srevisi 1 2 Fitur upload berkas belum selesai.`\n\n*Keterangan Tahap:*\n• `0` = Konsul 0 (Konsep & Judul)\n• `1` = Konsul 1 (Flow Program & Desain)\n• `2` = Konsul 2 (70%% Koding & Implementasi)\n\n_Ketik `%sbimbingan` untuk melihat nomor urut & ID kelompok bimbingan Anda._", r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix)
+			r.SendMessage(target, guide)
+			return
+		}
+
+		groupID := parts[0]
+		stage, err := strconv.Atoi(parts[1])
+		if err != nil || stage < 0 || stage > 2 {
+			r.SendMessage(target, "⚠️ Tahap konsul tidak valid. Gunakan `0` (Konsep), `1` (Flow), atau `2` (70% Koding).")
+			return
+		}
+		catatan := strings.TrimSpace(strings.Join(parts[2:], " "))
+		if catatan == "" {
+			r.SendMessage(target, "⚠️ Harap cantumkan catatan revisi untuk mahasiswa.")
+			return
+		}
+
+		res, err := r.apiClient.ReviewKonsul(asciiapi.ReviewKonsulParams{
+			SenderPhone: senderPhone,
+			GroupID:     groupID,
+			Stage:       stage,
+			Status:      "revisi",
+			Catatan:     catatan,
+		})
+		if err != nil {
+			log.Printf("[Bot] Error giving revisi: %v", err)
+			r.SendMessage(target, "❌ Gagal mengirim catatan revisi: "+err.Error())
+			return
+		}
+
+		// Send success confirmation to Aslab
+		reply := FormatReviewSuccess(res, r.apiClient.WebURL())
+		r.SendMessage(target, reply)
+
+		// Dispatch notifications to students asynchronously
+		if len(res.Recipients) > 0 {
+			go func(result *asciiapi.ReviewKonsulResult, note string) {
+				for _, m := range result.Recipients {
+					if m.PhoneNumber == "" {
+						continue
+					}
+					studentJID := types.NewJID(m.PhoneNumber, types.DefaultUserServer)
+					msg := FormatStudentReviewNotification(result.Group, result.AslabName, result.StageName, "revisi", note, r.apiClient.WebURL())
+					_ = r.SendMessage(studentJID, msg)
+					time.Sleep(300 * time.Millisecond)
+				}
+			}(res, catatan)
+		}
+
+	case "acc":
+		parts := strings.Fields(args)
+		if len(parts) < 2 {
+			guide := fmt.Sprintf("⚠️ *Format Perintah ACC:*\n`%sacc <No/ID_Kelompok> <Tahap: 0/1/2> [Catatan opsional]`\n\n*Contoh:*\n• `%sacc 1 0 Konsep & judul disetujui, lanjut flowchart.`\n• `%sacc 1 1 Flowchart sudah baik, lanjut koding 70%%.`\n• `%sacc 1 2 Progres koding sesuai, siap demo.`\n\n*Keterangan Tahap:*\n• `0` = Konsul 0 (Konsep & Judul)\n• `1` = Konsul 1 (Flow Program & Desain)\n• `2` = Konsul 2 (70%% Koding & Implementasi)\n\n_Ketik `%sbimbingan` untuk melihat nomor urut & ID kelompok bimbingan Anda._", r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix)
+			r.SendMessage(target, guide)
+			return
+		}
+
+		groupID := parts[0]
+		stage, err := strconv.Atoi(parts[1])
+		if err != nil || stage < 0 || stage > 2 {
+			r.SendMessage(target, "⚠️ Tahap konsul tidak valid. Gunakan `0` (Konsep), `1` (Flow), atau `2` (70% Koding).")
+			return
+		}
+
+		catatan := ""
+		if len(parts) > 2 {
+			catatan = strings.TrimSpace(strings.Join(parts[2:], " "))
+		}
+
+		res, err := r.apiClient.ReviewKonsul(asciiapi.ReviewKonsulParams{
+			SenderPhone: senderPhone,
+			GroupID:     groupID,
+			Stage:       stage,
+			Status:      "acc",
+			Catatan:     catatan,
+		})
+		if err != nil {
+			log.Printf("[Bot] Error giving ACC: %v", err)
+			r.SendMessage(target, "❌ Gagal memproses ACC: "+err.Error())
+			return
+		}
+
+		reply := FormatReviewSuccess(res, r.apiClient.WebURL())
+		r.SendMessage(target, reply)
+
+		// Dispatch notifications to students asynchronously
+		if len(res.Recipients) > 0 {
+			go func(result *asciiapi.ReviewKonsulResult, note string) {
+				for _, m := range result.Recipients {
+					if m.PhoneNumber == "" {
+						continue
+					}
+					studentJID := types.NewJID(m.PhoneNumber, types.DefaultUserServer)
+					msg := FormatStudentReviewNotification(result.Group, result.AslabName, result.StageName, "acc", note, r.apiClient.WebURL())
+					_ = r.SendMessage(studentJID, msg)
+					time.Sleep(300 * time.Millisecond)
+				}
+			}(res, catatan)
+		}
+
+	case "accfinal", "acctubes", "accproyek":
+		parts := strings.Fields(args)
+		if len(parts) < 1 {
+			guide := fmt.Sprintf("⚠️ *Format Perintah ACC Final:*\n`%saccfinal <No/ID_Kelompok> [Catatan opsional]`\n\n*Contoh:*\n• `%saccfinal 1 Proyek siap untuk demo praktikum.`\n• `%saccfinal KEL-01`\n\n_Ketik `%sbimbingan` untuk melihat nomor urut & ID kelompok bimbingan Anda._", r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix, r.cfg.BotPrefix)
+			r.SendMessage(target, guide)
+			return
+		}
+
+		groupID := parts[0]
+		catatan := ""
+		if len(parts) > 1 {
+			catatan = strings.TrimSpace(strings.Join(parts[1:], " "))
+		}
+
+		res, err := r.apiClient.ToggleAccFinal(asciiapi.AccFinalParams{
+			SenderPhone: senderPhone,
+			GroupID:     groupID,
+			IsAccFinal:  true,
+			Catatan:     catatan,
+		})
+		if err != nil {
+			log.Printf("[Bot] Error giving ACC Final: %v", err)
+			r.SendMessage(target, "❌ Gagal memproses ACC Final: "+err.Error())
+			return
+		}
+
+		reply := FormatAccFinalSuccess(res, r.apiClient.WebURL())
+		r.SendMessage(target, reply)
+
+		// Dispatch notifications to students asynchronously
+		if len(res.Recipients) > 0 {
+			go func(result *asciiapi.ReviewKonsulResult, note string) {
+				for _, m := range result.Recipients {
+					if m.PhoneNumber == "" {
+						continue
+					}
+					studentJID := types.NewJID(m.PhoneNumber, types.DefaultUserServer)
+					msg := FormatStudentAccFinalNotification(result.Group, result.AslabName, note, r.apiClient.WebURL())
+					_ = r.SendMessage(studentJID, msg)
+					time.Sleep(300 * time.Millisecond)
+				}
+			}(res, catatan)
+		}
 
 	case "jadwal", "schedule":
 		schedules, err := r.apiClient.GetSchedules()

@@ -18,7 +18,21 @@ Bot WhatsApp resmi Laboratorium Informatika ASCII (Universitas Mulawarman) yang 
 - `!faq` : Pertanyaan seputar praktikum yang sering ditanyakan.
 - `!ping` : Cek latency dan status koneksi bot ke web portal.
 
-### 2. Integrasi Dua Arah dengan Web `ascii-if`
+### 2. Autentikasi Akun (Login WhatsApp)
+- `!login <NIM> <password>` : Menghubungkan dan menautkan akun portal web ASCII Anda ke nomor WhatsApp ini secara permanen.
+- `!profil` / `!whoami` : Melihat detail profil dan akun yang sedang terhubung ke nomor WhatsApp ini.
+- `!logout` : Memutuskan tautan akun dari nomor WhatsApp ini.
+
+### 3. Fitur Bimbingan & Revisi (Langsung via WhatsApp Bot)
+- `!bimbingan` / `!mentee` / `!progres` : 
+  - **Aslab**: Menampilkan daftar seluruh kelompok bimbingan yang dimentori beserta nomor urut, status tahapan asistensi (Konsul 0, 1, 2, ACC Final), dan catatan terakhir.
+  - **Praktikan**: Menampilkan status bimbingan kelompoknya, nama Aslab pembimbing, serta catatan revisi terkini.
+- `!bimbingan [nim/nama/matkul]` : Mencari data kelompok bimbingan berdasarkan NIM atau kata kunci.
+- `!revisi <No/ID> <Tahap: 0/1/2> <Catatan>` : Memberikan catatan revisi asistensi langsung dari chat WhatsApp. Bot otomatis mengupdate database portal web dan mengirimkan notifikasi resmi ke seluruh anggota kelompok.
+- `!acc <No/ID> <Tahap: 0/1/2> [Catatan]` : Menyetujui tahapan asistensi (Konsul 0, 1, atau 2).
+- `!accfinal <No/ID> [Catatan]` : Memberikan status ACC Final (Siap Demo) untuk kelompok bimbingan.
+
+### 4. Integrasi Dua Arah dengan Web `ascii-if`
 - **Dari Bot ke Web**: Bot mengambil data via REST/OpenAPI di `/api/*` pada web `ascii-if` menggunakan otentikasi header `x-api-key`.
 - **Dari Web ke WhatsApp (Webhook Server)**: Bot membuka REST API lokal (default port `8080`) sehingga web `ascii-if` bisa memicu pengiriman pesan / broadcast otomatis:
   - `POST /api/v1/send-message` : Kirim pesan WA ke nomor tertentu.

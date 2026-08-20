@@ -14,7 +14,7 @@ func FormatHelp(prefix, webURL string) string {
 	sb.WriteString("🤖 *ASCII INFORMATIKA BOT (WHATSAPP)*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	sb.WriteString("Halo! Saya adalah bot asisten resmi Laboratorium Informatika ASCII.\n\n")
-	sb.WriteString("📋 *Daftar Perintah:*\n")
+	sb.WriteString("📋 *Daftar Perintah Umum:*\n")
 	sb.WriteString(fmt.Sprintf("• `%sjadwal` - Cek jadwal praktikum aktif\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%skelas` [kode/matkul] - Cek daftar kelas\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%smodul` [kata kunci] - Cari & unduh modul praktikum\n", prefix))
@@ -24,6 +24,15 @@ func FormatHelp(prefix, webURL string) string {
 	sb.WriteString(fmt.Sprintf("• `%saturan` - Tata tertib & aturan lab\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%sfaq` - Pertanyaan yang sering diajukan\n", prefix))
 	sb.WriteString(fmt.Sprintf("• `%sping` - Cek konektivitas bot & backend\n\n", prefix))
+	sb.WriteString("👥 *Bimbingan & Asistensi Praktikum:*\n")
+	sb.WriteString(fmt.Sprintf("• `%sbimbingan` [nim/nama] - Cek kelompok bimbingan & progres asistensi\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%srevisi` <No/ID> <0/1/2> <catatan> - Beri revisi bimbingan (Khusus Aslab)\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%sacc` <No/ID> <0/1/2> [catatan] - Beri ACC asistensi (Khusus Aslab)\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%saccfinal` <No/ID> [catatan] - Nyatakan ACC Final siap demo (Khusus Aslab)\n\n", prefix))
+	sb.WriteString("🔐 *Autentikasi Akun:*\n")
+	sb.WriteString(fmt.Sprintf("• `%slogin` <NIM> <password> - Tautkan akun portal ke nomor WA ini\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%sprofil` / `%swhoami` - Cek akun yang sedang terhubung\n", prefix, prefix))
+	sb.WriteString(fmt.Sprintf("• `%slogout` - Putuskan tautan akun dari nomor WA ini\n\n", prefix))
 	sb.WriteString(fmt.Sprintf("🌐 *Portal Web:* %s\n", webURL))
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	sb.WriteString("_Laboratorium Informatika Universitas Mulawarman_")
@@ -373,5 +382,337 @@ func FormatPing(botLatency time.Duration, apiLatency time.Duration, apiErr error
 	}
 	sb.WriteString(fmt.Sprintf("🕒 *Waktu Server:* %s\n", time.Now().Format("02 Jan 2006 15:04:05 MST")))
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	return sb.String()
+}
+
+func stageStatusBadge(status string) string {
+	switch strings.ToLower(status) {
+	case "acc":
+		return "✅ ACC"
+	case "revisi":
+		return "⚠️ REVISI"
+	case "pending":
+		return "⏳ Pending"
+	default:
+		return "⏳ Belum"
+	}
+}
+
+// FormatBimbinganSummary formats bimbingan list / status
+func FormatBimbinganSummary(data *asciiapi.BimbinganSummaryResult, prefix, webURL string) string {
+	var sb strings.Builder
+
+	if data.Mode == "not_registered" {
+		sb.WriteString("ℹ️ *Nomor WhatsApp Belum Terhubung*\n")
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		sb.WriteString("Nomor WhatsApp Anda belum tertaut dengan akun di portal praktikum ASCII.\n\n")
+		sb.WriteString("💡 *Cara Menautkan Nomor:*\n")
+		sb.WriteString(fmt.Sprintf("1. Login ke portal web: %s\n", webURL))
+		sb.WriteString("2. Buka menu *Pengaturan Profil* dan masukkan nomor WhatsApp Anda.\n\n")
+		sb.WriteString("🔍 *Atau cari bimbingan dengan NIM/Nama Kelompok:*\n")
+		sb.WriteString(fmt.Sprintf("Ketik: `%sbimbingan <NIM / Nama Kelompok>`\n", prefix))
+		sb.WriteString(fmt.Sprintf("Contoh: `%sbimbingan 2101552001`\n", prefix))
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		return sb.String()
+	}
+
+	if data.Mode == "search" {
+		sb.WriteString(fmt.Sprintf("🔍 *HASIL PENCARIAN BIMBINGAN: \"%s\"*\n", data.SearchQuery))
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	} else if data.Mode == "mentees" {
+		sb.WriteString("📋 *DAFTAR KELOMPOK BIMBINGAN*\n")
+		if data.UserName != "" {
+			sb.WriteString(fmt.Sprintf("👤 *Asisten:* Kak %s\n", data.UserName))
+		}
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	} else {
+		sb.WriteString("📋 *STATUS BIMBINGAN PRAKTIKUM*\n")
+		if data.UserName != "" {
+			sb.WriteString(fmt.Sprintf("👤 *Praktikan:* %s\n", data.UserName))
+		}
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+	}
+
+	if len(data.Groups) == 0 {
+		if data.Mode == "search" {
+			sb.WriteString(fmt.Sprintf("ℹ️ Tidak ditemukan kelompok bimbingan dengan kata kunci *\"%s\"*.\n", data.SearchQuery))
+			sb.WriteString(fmt.Sprintf("Coba gunakan NIM atau kata kunci lain: `%sbimbingan <kata kunci>`", prefix))
+		} else if data.Mode == "mentees" {
+			sb.WriteString("ℹ️ Belum ada kelompok bimbingan yang terdaftar di bawah bimbingan Anda saat ini.\n")
+			sb.WriteString(fmt.Sprintf("🔗 Buka portal untuk cek slot: %s/bimbingan", webURL))
+		} else {
+			sb.WriteString("ℹ️ Anda belum terdaftar dalam kelompok bimbingan manapun.\n")
+			sb.WriteString(fmt.Sprintf("🔗 Daftarkan kelompok bimbingan di portal: %s/bimbingan", webURL))
+		}
+		return sb.String()
+	}
+
+	for i, g := range data.Groups {
+		sb.WriteString(fmt.Sprintf("*%d. %s* (ID: `%s`)\n", i+1, g.NamaKelompok, g.ShortID))
+		sb.WriteString(fmt.Sprintf("   📖 *Mata Kuliah:* %s (%s)\n", g.MataKuliahName, g.Kelas))
+		sb.WriteString(fmt.Sprintf("   📌 *Judul:* %s\n", g.Judul))
+		if g.AslabName != "" {
+			aslabInfo := "Kak " + g.AslabName
+			if g.AslabPhoneNumber != "" {
+				aslabInfo += fmt.Sprintf(" (wa.me/%s)", g.AslabPhoneNumber)
+			}
+			sb.WriteString(fmt.Sprintf("   👨‍🏫 *Aslab:* %s\n", aslabInfo))
+		}
+
+		if len(g.Members) > 0 {
+			sb.WriteString("   👥 *Anggota:*\n")
+			for _, m := range g.Members {
+				roleLabel := ""
+				if m.Role == "Ketua" {
+					roleLabel = " *(Ketua)*"
+				}
+				sb.WriteString(fmt.Sprintf("      • %s (%s)%s\n", m.Nama, m.NIM, roleLabel))
+			}
+		}
+
+		accFinalBadge := "⏳ Belum"
+		if g.IsAccFinal {
+			accFinalBadge = "🎯 *ACC FINAL (SIAP DEMO)*"
+		}
+
+		sb.WriteString("   📊 *Tahap Asistensi:*\n")
+		sb.WriteString(fmt.Sprintf("      • Konsul 0 (Konsep): %s\n", stageStatusBadge(g.StatusKonsul0)))
+		if g.CatatanKonsul0 != "" {
+			sb.WriteString(fmt.Sprintf("        📝 Catatan: _\"%s\"_\n", g.CatatanKonsul0))
+		}
+		sb.WriteString(fmt.Sprintf("      • Konsul 1 (Flowchart): %s\n", stageStatusBadge(g.StatusKonsul1)))
+		if g.CatatanKonsul1 != "" {
+			sb.WriteString(fmt.Sprintf("        📝 Catatan: _\"%s\"_\n", g.CatatanKonsul1))
+		}
+		sb.WriteString(fmt.Sprintf("      • Konsul 2 (70%% Koding): %s\n", stageStatusBadge(g.StatusKonsul2)))
+		if g.CatatanKonsul2 != "" {
+			sb.WriteString(fmt.Sprintf("        📝 Catatan: _\"%s\"_\n", g.CatatanKonsul2))
+		}
+		sb.WriteString(fmt.Sprintf("      • ACC Final: %s\n", accFinalBadge))
+
+		if g.FlowURL != "" {
+			sb.WriteString(fmt.Sprintf("   🔗 *Flow:* %s\n", g.FlowURL))
+		}
+		if g.RepoURL != "" {
+			sb.WriteString(fmt.Sprintf("   🔗 *Repo:* %s\n", g.RepoURL))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	if data.Mode == "mentees" || data.UserRole == "aslab" || data.UserRole == "pengurus" || data.UserRole == "koordinator" {
+		sb.WriteString("💡 *Aksi Aslab via Chat Bot:*\n")
+		sb.WriteString(fmt.Sprintf("• `%srevisi <No/ID> <Tahap: 0/1/2> <Catatan>`\n", prefix))
+		sb.WriteString(fmt.Sprintf("  _Contoh:_ `%srevisi 1 1 Flowchart perbaiki alur autentikasi`\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%sacc <No/ID> <Tahap: 0/1/2> [Catatan]`\n", prefix))
+		sb.WriteString(fmt.Sprintf("  _Contoh:_ `%sacc 1 1 Flowchart sudah baik, lanjut koding 70%%`\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%saccfinal <No/ID> [Catatan]`\n", prefix))
+		sb.WriteString(fmt.Sprintf("  _Contoh:_ `%saccfinal 1 Selamat siap untuk demo!`\n\n", prefix))
+	}
+
+	sb.WriteString(fmt.Sprintf("🔗 Portal Bimbingan: %s/bimbingan", webURL))
+	return sb.String()
+}
+
+// FormatReviewSuccess formats the response when a review (revisi or acc) is successfully recorded
+func FormatReviewSuccess(res *asciiapi.ReviewKonsulResult, webURL string) string {
+	var sb strings.Builder
+	if res.StatusLabel == "✅ TELAH DI-ACC" {
+		sb.WriteString("🎉 *ASISTENSI BERHASIL DI-ACC!*\n")
+	} else {
+		sb.WriteString("📝 *CATATAN REVISI BERHASIL DIKIRIM!*\n")
+	}
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	if res.Group != nil {
+		sb.WriteString(fmt.Sprintf("📋 *Kelompok:* %s (%s)\n", res.Group.NamaKelompok, res.Group.Kelas))
+		sb.WriteString(fmt.Sprintf("📖 *Mata Kuliah:* %s\n", res.Group.MataKuliahName))
+		sb.WriteString(fmt.Sprintf("📌 *Judul:* %s\n", res.Group.Judul))
+	}
+
+	sb.WriteString(fmt.Sprintf("📌 *Tahapan:* %s\n", res.StageName))
+	sb.WriteString(fmt.Sprintf("📊 *Status Baru:* %s\n", res.StatusLabel))
+
+	var catatan string
+	if res.Group != nil {
+		if strings.Contains(res.StageName, "0") {
+			catatan = res.Group.CatatanKonsul0
+		} else if strings.Contains(res.StageName, "1") {
+			catatan = res.Group.CatatanKonsul1
+		} else if strings.Contains(res.StageName, "2") {
+			catatan = res.Group.CatatanKonsul2
+		}
+	}
+
+	if catatan != "" {
+		sb.WriteString(fmt.Sprintf("📝 *Catatan:* \"%s\"\n\n", catatan))
+	} else {
+		sb.WriteString("\n")
+	}
+
+	if len(res.Recipients) > 0 {
+		sb.WriteString(fmt.Sprintf("📢 *Notifikasi WhatsApp:* Berhasil dikirimkan otomatis ke %d anggota kelompok.\n\n", len(res.Recipients)))
+	}
+
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(fmt.Sprintf("🔗 Dashboard: %s/bimbingan", webURL))
+	return sb.String()
+}
+
+// FormatAccFinalSuccess formats the response when ACC final is given
+func FormatAccFinalSuccess(res *asciiapi.ReviewKonsulResult, webURL string) string {
+	var sb strings.Builder
+	sb.WriteString("🎯 *PROYEK DINYATAKAN ACC FINAL (SIAP DEMO)!*\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	if res.Group != nil {
+		sb.WriteString(fmt.Sprintf("📋 *Kelompok:* %s (%s)\n", res.Group.NamaKelompok, res.Group.Kelas))
+		sb.WriteString(fmt.Sprintf("📖 *Mata Kuliah:* %s\n", res.Group.MataKuliahName))
+		sb.WriteString(fmt.Sprintf("📌 *Judul:* %s\n\n", res.Group.Judul))
+	}
+
+	sb.WriteString("✅ Seluruh tahapan asistensi (Konsul 0, 1, dan 2) otomatis dinyatakan *ACC*.\n")
+	if len(res.Recipients) > 0 {
+		sb.WriteString(fmt.Sprintf("📢 *Notifikasi WhatsApp:* Telah dikirimkan otomatis ke %d anggota kelompok.\n\n", len(res.Recipients)))
+	}
+
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(fmt.Sprintf("🔗 Dashboard: %s/bimbingan", webURL))
+	return sb.String()
+}
+
+// FormatStudentReviewNotification formats official notification sent to students
+func FormatStudentReviewNotification(group *asciiapi.BimbinganGroupItem, aslabName, stageName, status, catatan, webURL string) string {
+	statusLabel := "⚠️ *PERLU REVISI*"
+	if status == "acc" {
+		statusLabel = "✅ *TELAH DI-ACC*"
+	}
+
+	timeWIB := time.Now().Format("15:04")
+	ref := strings.ToUpper(fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFF))
+
+	var sb strings.Builder
+	sb.WriteString("📢 *Update Hasil Bimbingan Praktikum ASCII*\n\n")
+	sb.WriteString(fmt.Sprintf("Halo Rekan Mahasiswa (*%s*),\n", group.NamaKelompok))
+	sb.WriteString(fmt.Sprintf("Asisten pembimbing Kak *%s* telah memberikan catatan untuk tahapan *%s* (%s):\n\n", aslabName, stageName, group.MataKuliahName))
+	sb.WriteString(fmt.Sprintf("Status: %s\n", statusLabel))
+	if catatan != "" {
+		sb.WriteString(fmt.Sprintf("📝 *Catatan Aslab:*\n\"%s\"\n\n", catatan))
+	} else {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("Cek detail dan tindak lanjut pada portal:\n")
+	sb.WriteString(fmt.Sprintf("🔗 %s/bimbingan\n\n", webURL))
+	sb.WriteString(fmt.Sprintf("_Ref: #%s • %s WIB_\n", ref, timeWIB))
+	sb.WriteString("_Pesan otomatis dari Sistem Portal Lab ASCII Informatika_")
+	return sb.String()
+}
+
+// FormatStudentAccFinalNotification formats official notification sent to students on ACC final
+func FormatStudentAccFinalNotification(group *asciiapi.BimbinganGroupItem, aslabName, catatan, webURL string) string {
+	timeWIB := time.Now().Format("15:04")
+	ref := strings.ToUpper(fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFF))
+
+	var sb strings.Builder
+	sb.WriteString("📢 *Update Hasil Bimbingan Praktikum ASCII*\n\n")
+	sb.WriteString(fmt.Sprintf("Halo Rekan Mahasiswa (*%s*),\n", group.NamaKelompok))
+	sb.WriteString(fmt.Sprintf("Asisten pembimbing Kak *%s* telah menyatakan bimbingan proyek kelompok Anda:\n\n", aslabName))
+	sb.WriteString("Status: 🎯 *ACC FINAL (SIAP DEMO)*\n")
+	if catatan != "" {
+		sb.WriteString(fmt.Sprintf("📝 *Catatan Aslab:*\n\"%s\"\n\n", catatan))
+	} else {
+		sb.WriteString("📝 *Catatan Aslab:*\n\"Selamat! Proyek bimbingan kelompok Anda telah disetujui ACC Final dan siap untuk jadwal demo praktikum.\"\n\n")
+	}
+	sb.WriteString("Cek detail dan tindak lanjut pada portal:\n")
+	sb.WriteString(fmt.Sprintf("🔗 %s/bimbingan\n\n", webURL))
+	sb.WriteString(fmt.Sprintf("_Ref: #%s • %s WIB_\n", ref, timeWIB))
+	sb.WriteString("_Pesan otomatis dari Sistem Portal Lab ASCII Informatika_")
+	return sb.String()
+}
+
+func roleLabel(role string) string {
+	switch role {
+	case "aslab":
+		return "👨‍🏫 Asisten Laboratorium"
+	case "pengurus":
+		return "👑 Pengurus Lab"
+	case "koordinator":
+		return "🎖️ Koordinator Praktikum"
+	case "praktikan":
+		return "🎓 Praktikan / Mahasiswa"
+	default:
+		return "👤 Pengguna"
+	}
+}
+
+// FormatLoginSuccess formats successful login response
+func FormatLoginSuccess(u *asciiapi.UserInfo, prefix, webURL string) string {
+	var sb strings.Builder
+	sb.WriteString("✅ *LOGIN BERHASIL!*\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(fmt.Sprintf("Halo, *%s*! Akun Anda telah berhasil ditautkan ke nomor WhatsApp ini.\n\n", u.Name))
+	sb.WriteString(fmt.Sprintf("📋 *Detail Akun:*\n"))
+	sb.WriteString(fmt.Sprintf("• *NIM / Username:* %s\n", u.Username))
+	sb.WriteString(fmt.Sprintf("• *Peran (Role):* %s\n", roleLabel(u.Role)))
+	if u.Email != "" {
+		sb.WriteString(fmt.Sprintf("• *Email:* %s\n", u.Email))
+	}
+	sb.WriteString(fmt.Sprintf("• *Status WhatsApp:* 🟢 Terhubung (+%s)\n\n", u.PhoneNumber))
+
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString("💡 *Perintah yang Dapat Digunakan:*\n")
+	if u.Role == "aslab" || u.Role == "pengurus" || u.Role == "koordinator" {
+		sb.WriteString(fmt.Sprintf("• `%sbimbingan` - Lihat seluruh kelompok yang Anda bimbing\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%srevisi <No/ID> <Tahap> <Catatan>` - Beri revisi bimbingan\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%sacc <No/ID> <Tahap>` - Beri ACC asistensi\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%saccfinal <No/ID>` - ACC Final proyek praktikum\n", prefix))
+	} else {
+		sb.WriteString(fmt.Sprintf("• `%sbimbingan` - Cek status kelompok & progres asistensi Anda\n", prefix))
+	}
+	sb.WriteString(fmt.Sprintf("• `%sprofil` - Cek status profil akun WhatsApp ini\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%slogout` - Putuskan tautan akun dari nomor ini\n\n", prefix))
+	sb.WriteString(fmt.Sprintf("🔗 Portal Lab: %s", webURL))
+	return sb.String()
+}
+
+// FormatLogoutSuccess formats logout message
+func FormatLogoutSuccess(u *asciiapi.UserInfo) string {
+	var sb strings.Builder
+	sb.WriteString("🚪 *LOGOUT BERHASIL*\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(fmt.Sprintf("Tautan akun *%s* (%s) dengan nomor WhatsApp ini telah berhasil dilepas.\n\n", u.Name, u.Username))
+	sb.WriteString("Ketik `!login <NIM> <password>` kapan saja jika ingin menghubungkan kembali akun Anda.\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	return sb.String()
+}
+
+// FormatProfile formats profile status message
+func FormatProfile(u *asciiapi.UserInfo, prefix, webURL string) string {
+	var sb strings.Builder
+	if u == nil {
+		sb.WriteString("ℹ️ *BELUM ADA AKUN TERHUBUNG*\n")
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		sb.WriteString("Nomor WhatsApp ini belum tertaut dengan akun di portal praktikum ASCII.\n\n")
+		sb.WriteString("🔐 *Cara Menghubungkan Akun:*\n")
+		sb.WriteString(fmt.Sprintf("Ketik: `%slogin <NIM> <password>`\n", prefix))
+		sb.WriteString(fmt.Sprintf("Contoh: `%slogin 2101552001 Password123`\n\n", prefix))
+		sb.WriteString(fmt.Sprintf("🔗 Portal Web: %s\n", webURL))
+		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+		return sb.String()
+	}
+
+	sb.WriteString("👤 *PROFIL AKUN TERTUT*\n")
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(fmt.Sprintf("• *Nama:* %s\n", u.Name))
+	sb.WriteString(fmt.Sprintf("• *NIM / Username:* %s\n", u.Username))
+	sb.WriteString(fmt.Sprintf("• *Peran (Role):* %s\n", roleLabel(u.Role)))
+	if u.Email != "" {
+		sb.WriteString(fmt.Sprintf("• *Email:* %s\n", u.Email))
+	}
+	sb.WriteString(fmt.Sprintf("• *Nomor WhatsApp:* +%s (🟢 Aktif)\n\n", u.PhoneNumber))
+
+	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	sb.WriteString(fmt.Sprintf("• Ketik `%sbimbingan` untuk melihat data bimbingan.\n", prefix))
+	sb.WriteString(fmt.Sprintf("• Ketik `%slogout` untuk memutuskan tautan akun dari nomor ini.\n", prefix))
 	return sb.String()
 }
