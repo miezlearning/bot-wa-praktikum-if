@@ -1,10 +1,13 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +93,9 @@ func (r *Router) HandleMessage(evt *events.Message) {
 			args = parts[1:]
 		case "8", "profil", "whoami", "akun":
 			cmd = "profil"
+			args = parts[1:]
+		case "foto", "photo":
+			cmd = "foto"
 			args = parts[1:]
 		case "9", "aturan", "rules":
 			cmd = "aturan"
@@ -189,7 +195,19 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 		reply := FormatLogoutSuccess(u)
 		r.SendMessage(target, reply)
 
-	case "profil", "profile", "whoami", "akun", "me":
+	case "profil", "profile", "whoami", "akun", "me", "foto", "photo":
+		if strings.TrimSpace(args) != "" {
+			targetNIM := strings.TrimSpace(args)
+			photo, err := FetchStudentPhoto(targetNIM)
+			if err != nil || len(photo) == 0 {
+				r.SendMessage(target, fmt.Sprintf("ℹ️ Foto untuk NIM `%s` tidak ditemukan di AIS Unmul.", targetNIM))
+				return
+			}
+			caption := fmt.Sprintf("👤 *Foto Mahasiswa Unmul*\n🆔 *NIM:* %s\n🌐 *Sumber:* AIS Universitas Mulawarman", targetNIM)
+			_ = r.SendImageMessage(target, photo, caption)
+			return
+		}
+
 		u, err := r.apiClient.GetProfile(senderPhone)
 		if err != nil {
 			log.Printf("[Bot] Profile fetch error: %v", err)
@@ -197,6 +215,13 @@ func (r *Router) dispatch(target types.JID, senderPhone, cmd, args string) {
 			return
 		}
 		reply := FormatProfile(u, r.cfg.BotPrefix, r.apiClient.WebURL())
+		if u != nil && u.Username != "" {
+			photo, photoErr := FetchStudentPhoto(u.Username)
+			if photoErr == nil && len(photo) > 0 {
+				_ = r.SendImageMessage(target, photo, reply)
+				return
+			}
+		}
 		r.SendMessage(target, reply)
 
 	case "bimbingan", "bimbing", "mentee", "mentees", "progres", "tubes", "tugasbesar":
@@ -464,6 +489,71 @@ func (r *Router) SendMessage(target types.JID, text string) error {
 		return err
 	}
 	return nil
+}
+
+// SendImageMessage sends an image with caption to WhatsApp recipient
+func (r *Router) SendImageMessage(target types.JID, imageBytes []byte, caption string) error {
+	if r.waClient == nil || !r.waClient.IsConnected() {
+		return fmt.Errorf("whatsapp client is not connected")
+	}
+
+	uploaded, err := r.waClient.Upload(context.Background(), imageBytes, whatsmeow.MediaImage)
+	if err != nil {
+		log.Printf("[Bot] Failed to upload image media (%v), falling back to text", err)
+		return r.SendMessage(target, caption)
+	}
+
+	msg := &waProto.Message{
+		ImageMessage: &waProto.ImageMessage{
+			Caption:       proto.String(caption),
+			Mimetype:      proto.String("image/jpeg"),
+			URL:           &uploaded.URL,
+			DirectPath:    &uploaded.DirectPath,
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    &uploaded.FileLength,
+		},
+	}
+
+	_, err = r.waClient.SendMessage(context.Background(), target, msg)
+	if err != nil {
+		log.Printf("[Bot] Failed to send image message to %s (%v), falling back to text", target.String(), err)
+		return r.SendMessage(target, caption)
+	}
+	return nil
+}
+
+// FetchStudentPhoto fetches student photo from AIS Unmul
+func FetchStudentPhoto(nim string) ([]byte, error) {
+	nim = strings.TrimSpace(nim)
+	if nim == "" {
+		return nil, fmt.Errorf("nim is empty")
+	}
+
+	url := fmt.Sprintf("https://ais.unmul.ac.id/file/foto/%s", nim)
+	client := &http.Client{Timeout: 6 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP error %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil || len(data) < 200 {
+		return nil, fmt.Errorf("invalid image data")
+	}
+
+	// Reject HTML error pages
+	if bytes.HasPrefix(data, []byte("<")) {
+		return nil, fmt.Errorf("received HTML instead of image")
+	}
+
+	return data, nil
 }
 
 func extractMessageText(msg *waProto.Message) string {
