@@ -59,31 +59,43 @@ func (c *Client) getDB() (*sql.DB, error) {
 		dbPath = "../ascii-if/local.db"
 	}
 
-	// Check if file exists or resolve relative to working dir / executable
-	if _, err := os.Stat(dbPath); err != nil {
-		// Try alternate paths
-		candidates := []string{
-			"../ascii-if/local.db",
-			"ascii-if/local.db",
-			"./local.db",
-			filepath.Join(os.Getenv("USERPROFILE"), "Documents", "Programming", "Web Ascii", "ascii-if", "local.db"),
+	// Check if file exists or resolve from candidate paths
+	candidates := []string{
+		dbPath,
+		"../ascii-if/local.db",
+		"ascii-if/local.db",
+		"./local.db",
+		"./data/local.db",
+		"/data/local.db",
+		"/app/local.db",
+		filepath.Join(os.Getenv("USERPROFILE"), "Documents", "Programming", "Web Ascii", "ascii-if", "local.db"),
+	}
+
+	foundPath := ""
+	for _, cand := range candidates {
+		if cand == "" {
+			continue
 		}
-		found := false
-		for _, cand := range candidates {
-			if _, err := os.Stat(cand); err == nil {
-				dbPath = cand
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("database file not found at %s: %w", dbPath, err)
+		if _, err := os.Stat(cand); err == nil {
+			foundPath = cand
+			break
 		}
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	// If neither exists, fallback to ./local.db or dbPath and create directory if needed
+	if foundPath == "" {
+		foundPath = dbPath
+		if foundPath == "../ascii-if/local.db" {
+			foundPath = "./local.db"
+		}
+		if dir := filepath.Dir(foundPath); dir != "." && dir != "" {
+			_ = os.MkdirAll(dir, 0755)
+		}
+	}
+
+	db, err := sql.Open("sqlite", foundPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open sqlite db: %w", err)
+		return nil, fmt.Errorf("failed to open sqlite db at %s: %w", foundPath, err)
 	}
 
 	// Ensure session mapping table exists for WhatsApp LID and phone numbers
@@ -92,8 +104,7 @@ func (c *Client) getDB() (*sql.DB, error) {
 			sender_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE
+			updated_at INTEGER NOT NULL
 		);
 		UPDATE user SET phone_number = NULL WHERE phone_number LIKE '15%' AND length(phone_number) >= 14;
 	`)
