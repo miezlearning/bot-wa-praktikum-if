@@ -98,14 +98,80 @@ func (c *Client) getDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to open sqlite db at %s: %w", foundPath, err)
 	}
 
-	// Ensure session mapping table exists for WhatsApp LID and phone numbers
+	// Ensure required tables exist for standalone VPS deployment and session pairing
 	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS user (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			email TEXT,
+			username TEXT,
+			role TEXT DEFAULT 'praktikan',
+			phone_number TEXT,
+			password_hash TEXT,
+			created_at INTEGER,
+			updated_at INTEGER
+		);
+
 		CREATE TABLE IF NOT EXISTS bot_wa_sessions (
 			sender_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS mata_kuliah (
+			id TEXT PRIMARY KEY,
+			nama TEXT NOT NULL,
+			singkatan TEXT,
+			semester INTEGER DEFAULT 1,
+			tahun INTEGER DEFAULT 2025
+		);
+
+		CREATE TABLE IF NOT EXISTS bimbingan_slot (
+			id TEXT PRIMARY KEY,
+			mata_kuliah_id TEXT,
+			aslab_id TEXT,
+			kelas TEXT,
+			hari TEXT,
+			jam_mulai TEXT,
+			jam_selesai TEXT,
+			kuota INTEGER DEFAULT 5,
+			created_at INTEGER,
+			updated_at INTEGER
+		);
+
+		CREATE TABLE IF NOT EXISTS bimbingan_group (
+			id TEXT PRIMARY KEY,
+			mata_kuliah_id TEXT,
+			kelas TEXT,
+			nama_kelompok TEXT,
+			judul TEXT,
+			deskripsi TEXT,
+			bimbingan_slot_id TEXT,
+			flow_url TEXT,
+			repo_url TEXT,
+			status_konsul_0 TEXT DEFAULT 'belum',
+			catatan_konsul_0 TEXT,
+			status_konsul_1 TEXT DEFAULT 'belum',
+			catatan_konsul_1 TEXT,
+			status_konsul_2 TEXT DEFAULT 'belum',
+			catatan_konsul_2 TEXT,
+			is_acc_final INTEGER DEFAULT 0,
+			created_at INTEGER,
+			updated_at INTEGER
+		);
+
+		CREATE TABLE IF NOT EXISTS bimbingan_member (
+			id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL,
+			user_id TEXT,
+			nim TEXT,
+			nama TEXT,
+			role TEXT DEFAULT 'Anggota',
+			created_at INTEGER,
+			updated_at INTEGER
+		);
+
 		UPDATE user SET phone_number = NULL WHERE phone_number LIKE '15%' AND length(phone_number) >= 14;
 	`)
 
@@ -786,6 +852,22 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 		now := time.Now().UnixMilli()
 		raw := strings.TrimSpace(senderPhone)
 
+		// 3. Upsert user into user table so it's always accessible
+		_, _ = db.Exec(`
+			INSERT INTO user (id, name, email, username, role, phone_number, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET 
+				name = excluded.name,
+				email = excluded.email,
+				username = excluded.username,
+				role = excluded.role,
+				phone_number = CASE 
+					WHEN excluded.phone_number != '' AND excluded.phone_number NOT LIKE '15%' THEN excluded.phone_number 
+					ELSE user.phone_number 
+				END,
+				updated_at = excluded.updated_at
+		`, matchedUser.ID, matchedUser.Name, matchedUser.Email, matchedUser.Username, matchedUser.Role, matchedUser.PhoneNumber, now, now)
+
 		_, _ = db.Exec(`
 			INSERT INTO bot_wa_sessions (sender_id, user_id, created_at, updated_at)
 			VALUES (?, ?, ?, ?)
@@ -798,10 +880,6 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 				VALUES (?, ?, ?, ?)
 				ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at
 			`, norm, matchedUser.ID, now, now)
-		}
-
-		if matchedUser.PhoneNumber != "" && !strings.HasPrefix(matchedUser.PhoneNumber, "15") {
-			_, _ = db.Exec("UPDATE user SET phone_number = ?, updated_at = ? WHERE id = ? AND (phone_number IS NULL OR phone_number = '' OR phone_number LIKE '15%')", matchedUser.PhoneNumber, now, matchedUser.ID)
 		}
 	}
 
