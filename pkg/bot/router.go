@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -45,20 +46,102 @@ func (r *Router) HandleMessage(evt *events.Message) {
 	}
 
 	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, r.cfg.BotPrefix) {
-		return
+
+	var cmd string
+	var args []string
+
+	if strings.HasPrefix(text, r.cfg.BotPrefix) {
+		rawCommand := strings.TrimPrefix(text, r.cfg.BotPrefix)
+		parts := strings.Fields(rawCommand)
+		if len(parts) == 0 {
+			return
+		}
+		cmd = strings.ToLower(parts[0])
+		args = parts[1:]
+	} else {
+		// Support direct numeric shortcuts and plain text keywords without prefix
+		parts := strings.Fields(text)
+		if len(parts) == 0 {
+			return
+		}
+		first := strings.ToLower(parts[0])
+
+		switch first {
+		case "1", "bimbingan", "mentee", "progres":
+			cmd = "bimbingan"
+			args = parts[1:]
+		case "2", "jadwal":
+			cmd = "jadwal"
+			args = parts[1:]
+		case "3", "kelas":
+			cmd = "kelas"
+			args = parts[1:]
+		case "4", "modul":
+			cmd = "modul"
+			args = parts[1:]
+		case "5", "pengumuman":
+			cmd = "pengumuman"
+			args = parts[1:]
+		case "6", "berita":
+			cmd = "berita"
+			args = parts[1:]
+		case "7", "kontak", "aslab":
+			cmd = "kontak"
+			args = parts[1:]
+		case "8", "profil", "whoami", "akun":
+			cmd = "profil"
+			args = parts[1:]
+		case "9", "aturan", "rules":
+			cmd = "aturan"
+			args = parts[1:]
+		case "0", "menu", "help", "halo", "hi", "p", "start":
+			cmd = "help"
+			args = parts[1:]
+		case "login", "masuk":
+			cmd = "login"
+			args = parts[1:]
+		case "logout", "keluar":
+			cmd = "logout"
+			args = parts[1:]
+		case "revisi", "rev":
+			cmd = "revisi"
+			args = parts[1:]
+		case "acc":
+			cmd = "acc"
+			args = parts[1:]
+		case "accfinal":
+			cmd = "accfinal"
+			args = parts[1:]
+		default:
+			return
+		}
 	}
 
-	rawCommand := strings.TrimPrefix(text, r.cfg.BotPrefix)
-	parts := strings.Fields(rawCommand)
-	if len(parts) == 0 {
-		return
+	// Map numeric command with prefix e.g. "!1" -> "bimbingan", "!2" -> "jadwal", etc.
+	switch cmd {
+	case "1":
+		cmd = "bimbingan"
+	case "2":
+		cmd = "jadwal"
+	case "3":
+		cmd = "kelas"
+	case "4":
+		cmd = "modul"
+	case "5":
+		cmd = "pengumuman"
+	case "6":
+		cmd = "berita"
+	case "7":
+		cmd = "kontak"
+	case "8":
+		cmd = "profil"
+	case "9":
+		cmd = "aturan"
+	case "0":
+		cmd = "help"
 	}
 
-	cmd := strings.ToLower(parts[0])
-	args := parts[1:]
 	argStr := strings.Join(args, " ")
-
 	senderPhone := evt.Info.Sender.User
 	sender := senderPhone
 	if evt.Info.PushName != "" {
@@ -392,6 +475,52 @@ func extractMessageText(msg *waProto.Message) string {
 	}
 	if msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Text != nil {
 		return *msg.ExtendedTextMessage.Text
+	}
+	if msg.ButtonsResponseMessage != nil {
+		if msg.ButtonsResponseMessage.SelectedButtonID != nil && *msg.ButtonsResponseMessage.SelectedButtonID != "" {
+			return *msg.ButtonsResponseMessage.SelectedButtonID
+		}
+	}
+	if msg.ListResponseMessage != nil {
+		if msg.ListResponseMessage.SingleSelectReply != nil && msg.ListResponseMessage.SingleSelectReply.SelectedRowID != nil {
+			return *msg.ListResponseMessage.SingleSelectReply.SelectedRowID
+		}
+		if msg.ListResponseMessage.Title != nil && *msg.ListResponseMessage.Title != "" {
+			return *msg.ListResponseMessage.Title
+		}
+	}
+	if msg.TemplateButtonReplyMessage != nil {
+		if msg.TemplateButtonReplyMessage.SelectedID != nil && *msg.TemplateButtonReplyMessage.SelectedID != "" {
+			return *msg.TemplateButtonReplyMessage.SelectedID
+		}
+		if msg.TemplateButtonReplyMessage.SelectedDisplayText != nil && *msg.TemplateButtonReplyMessage.SelectedDisplayText != "" {
+			return *msg.TemplateButtonReplyMessage.SelectedDisplayText
+		}
+	}
+	if msg.InteractiveResponseMessage != nil {
+		if nfm := msg.InteractiveResponseMessage.GetNativeFlowResponseMessage(); nfm != nil {
+			if nfm.ParamsJSON != nil && *nfm.ParamsJSON != "" {
+				var p struct {
+					ID string `json:"id"`
+				}
+				if err := json.Unmarshal([]byte(*nfm.ParamsJSON), &p); err == nil && p.ID != "" {
+					return p.ID
+				}
+				return *nfm.ParamsJSON
+			}
+		}
+		if msg.InteractiveResponseMessage.Body != nil && msg.InteractiveResponseMessage.Body.Text != nil {
+			return *msg.InteractiveResponseMessage.Body.Text
+		}
+	}
+	if msg.ViewOnceMessage != nil && msg.ViewOnceMessage.Message != nil {
+		return extractMessageText(msg.ViewOnceMessage.Message)
+	}
+	if msg.EphemeralMessage != nil && msg.EphemeralMessage.Message != nil {
+		return extractMessageText(msg.EphemeralMessage.Message)
+	}
+	if msg.DocumentWithCaptionMessage != nil && msg.DocumentWithCaptionMessage.Message != nil {
+		return extractMessageText(msg.DocumentWithCaptionMessage.Message)
 	}
 	if msg.ImageMessage != nil && msg.ImageMessage.Caption != nil {
 		return *msg.ImageMessage.Caption
