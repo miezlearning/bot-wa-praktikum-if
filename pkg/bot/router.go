@@ -53,8 +53,21 @@ func (r *Router) HandleMessage(evt *events.Message) {
 	var cmd string
 	var args []string
 
+	matchedPrefix := ""
 	if strings.HasPrefix(text, r.cfg.BotPrefix) {
-		rawCommand := strings.TrimPrefix(text, r.cfg.BotPrefix)
+		matchedPrefix = r.cfg.BotPrefix
+	} else if strings.HasPrefix(text, "!") {
+		matchedPrefix = "!"
+	} else if strings.HasPrefix(text, ".") {
+		matchedPrefix = "."
+	} else if strings.HasPrefix(text, "/") {
+		matchedPrefix = "/"
+	} else if strings.HasPrefix(text, "#") {
+		matchedPrefix = "#"
+	}
+
+	if matchedPrefix != "" {
+		rawCommand := strings.TrimPrefix(text, matchedPrefix)
 		parts := strings.Fields(rawCommand)
 		if len(parts) == 0 {
 			return
@@ -149,6 +162,9 @@ func (r *Router) HandleMessage(evt *events.Message) {
 
 	argStr := strings.Join(args, " ")
 	senderPhone := evt.Info.Sender.User
+	if evt.Info.Sender.Server == "lid" && !evt.Info.IsGroup && evt.Info.Chat.Server != "lid" && evt.Info.Chat.User != "" {
+		senderPhone = evt.Info.Chat.User
+	}
 	sender := senderPhone
 	if evt.Info.PushName != "" {
 		sender = fmt.Sprintf("%s (%s)", evt.Info.PushName, sender)

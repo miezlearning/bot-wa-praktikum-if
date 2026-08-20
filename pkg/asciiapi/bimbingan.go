@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -193,6 +194,27 @@ func (c *Client) FindUserByPhone(phone string) (*UserInfo, error) {
 		return nil, fmt.Errorf("nomor telepon kosong atau tidak valid")
 	}
 
+	searchPhone := norm
+	if searchPhone == "" {
+		searchPhone = raw
+	}
+
+	// 1. Try Live Web API first (via /bot/user?phone=...)
+	if c.baseURL != "" {
+		queryParam := url.QueryEscape(searchPhone)
+		respBytes, err := c.doRequestWithAuth(http.MethodGet, fmt.Sprintf("/bot/user?phone=%s", queryParam), nil, "")
+		if err == nil {
+			var apiResp struct {
+				Success bool      `json:"success"`
+				User    *UserInfo `json:"user"`
+			}
+			if err := json.Unmarshal(respBytes, &apiResp); err == nil && apiResp.Success && apiResp.User != nil {
+				return apiResp.User, nil
+			}
+		}
+	}
+
+	// 2. Fallback to Local SQLite DB
 	db, err := c.getDB()
 	if err != nil {
 		return nil, err
@@ -270,6 +292,29 @@ func (c *Client) getUserSession(phone string) (string, *UserInfo) {
 func (c *Client) GetBimbinganSummary(phone, query string) (*BimbinganSummaryResult, error) {
 	query = strings.TrimSpace(query)
 	normPhone := NormalizePhoneNumber(phone)
+	if normPhone == "" {
+		normPhone = strings.TrimSpace(phone)
+	}
+
+	// 1. Try Live Web API first (/bot/bimbingan/summary)
+	if c.baseURL != "" {
+		reqURL := fmt.Sprintf("/bot/bimbingan/summary?phone=%s&query=%s", url.QueryEscape(normPhone), url.QueryEscape(query))
+		respBytes, err := c.doRequestWithAuth(http.MethodGet, reqURL, nil, "")
+		if err == nil {
+			var result BimbinganSummaryResult
+			if err := json.Unmarshal(respBytes, &result); err == nil && (result.UserFound || len(result.Groups) > 0 || result.Mode != "") {
+				for i := range result.Groups {
+					if len(result.Groups[i].ID) >= 6 {
+						result.Groups[i].ShortID = result.Groups[i].ID[:6]
+					} else {
+						result.Groups[i].ShortID = result.Groups[i].ID
+					}
+				}
+				return &result, nil
+			}
+		}
+	}
+
 	token, caller := c.getUserSession(phone)
 
 	result := &BimbinganSummaryResult{

@@ -39,7 +39,7 @@ func LoadConfig() *Config {
 		PairingMode:  getEnvBool("PAIRING_MODE", false),
 		PhoneNumber:  getEnv("PHONE_NUMBER", ""),
 		AsciiAPIURL:  getEnv("ASCII_API_URL", "http://localhost:3000/api"),
-		AsciiAPIKey:  getEnv("ASCII_API_KEY", ""),
+		AsciiAPIKey:  getEnv("ASCII_API_KEY", "ascii-secret-api-key-2026"),
 		AsciiWebURL:  getEnv("ASCII_WEB_URL", "https://ascii.web.id"),
 		AsciiDBPath:  getEnv("ASCII_DB_PATH", "../ascii-if/local.db"),
 		ServerPort:   getEnvInt("SERVER_PORT", 8080),
