@@ -461,8 +461,9 @@ func FormatBimbinganSummary(data *asciiapi.BimbinganSummaryResult, prefix, webUR
 		sb.WriteString(fmt.Sprintf("   📌 *Judul:* %s\n", g.Judul))
 		if g.AslabName != "" {
 			aslabInfo := "Kak " + g.AslabName
-			if g.AslabPhoneNumber != "" {
-				aslabInfo += fmt.Sprintf(" (wa.me/%s)", g.AslabPhoneNumber)
+			cleanPhone := asciiapi.NormalizePhoneNumber(g.AslabPhoneNumber)
+			if cleanPhone != "" && !strings.HasPrefix(cleanPhone, "15") && len(cleanPhone) <= 14 {
+				aslabInfo += fmt.Sprintf(" (wa.me/%s)", cleanPhone)
 			}
 			sb.WriteString(fmt.Sprintf("   👨‍🏫 *Aslab:* %s\n", aslabInfo))
 		}
@@ -658,26 +659,30 @@ func FormatLoginSuccess(u *asciiapi.UserInfo, prefix, webURL string) string {
 	var sb strings.Builder
 	sb.WriteString("✅ *LOGIN BERHASIL!*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	sb.WriteString(fmt.Sprintf("Halo, *%s*! Akun Anda telah berhasil ditautkan ke nomor WhatsApp ini.\n\n", u.Name))
+	sb.WriteString(fmt.Sprintf("Halo, *%s*! Akun Anda telah berhasil ditautkan ke WhatsApp ini.\n\n", u.Name))
 	sb.WriteString(fmt.Sprintf("📋 *Detail Akun:*\n"))
+	sb.WriteString(fmt.Sprintf("• *Nama Lengkap:* %s\n", u.Name))
 	sb.WriteString(fmt.Sprintf("• *NIM / Username:* %s\n", u.Username))
 	sb.WriteString(fmt.Sprintf("• *Peran (Role):* %s\n", roleLabel(u.Role)))
 	if u.Email != "" {
 		sb.WriteString(fmt.Sprintf("• *Email:* %s\n", u.Email))
 	}
-	sb.WriteString(fmt.Sprintf("• *Status WhatsApp:* 🟢 Terhubung (+%s)\n\n", u.PhoneNumber))
+	if u.PhoneNumber != "" && !strings.HasPrefix(u.PhoneNumber, "15") && len(u.PhoneNumber) <= 14 {
+		sb.WriteString(fmt.Sprintf("• *Nomor HP Terdaftar:* +%s\n", u.PhoneNumber))
+	}
+	sb.WriteString("• *Status WhatsApp:* 🟢 Terhubung & Aktif\n\n")
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	sb.WriteString("💡 *Perintah yang Dapat Digunakan:*\n")
 	if u.Role == "aslab" || u.Role == "pengurus" || u.Role == "koordinator" {
-		sb.WriteString(fmt.Sprintf("• `%sbimbingan` - Lihat seluruh kelompok yang Anda bimbing\n", prefix))
-		sb.WriteString(fmt.Sprintf("• `%srevisi <No/ID> <Tahap> <Catatan>` - Beri revisi bimbingan\n", prefix))
-		sb.WriteString(fmt.Sprintf("• `%sacc <No/ID> <Tahap>` - Beri ACC asistensi\n", prefix))
-		sb.WriteString(fmt.Sprintf("• `%saccfinal <No/ID>` - ACC Final proyek praktikum\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%s1` atau `%sbimbingan` - Lihat seluruh kelompok yang Anda bimbing\n", prefix, prefix))
+		sb.WriteString(fmt.Sprintf("• `%srevisi <No> <Tahap> <Catatan>` - Beri revisi bimbingan\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%sacc <No> <Tahap>` - Beri ACC asistensi\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%saccfinal <No>` - ACC Final proyek praktikum\n", prefix))
 	} else {
-		sb.WriteString(fmt.Sprintf("• `%sbimbingan` - Cek status kelompok & progres asistensi Anda\n", prefix))
+		sb.WriteString(fmt.Sprintf("• `%s1` atau `%sbimbingan` - Cek status kelompok & progres asistensi Anda\n", prefix, prefix))
 	}
-	sb.WriteString(fmt.Sprintf("• `%sprofil` - Cek status profil akun WhatsApp ini\n", prefix))
+	sb.WriteString(fmt.Sprintf("• `%s8` atau `%sprofil` - Cek status profil akun WhatsApp ini\n", prefix, prefix))
 	sb.WriteString(fmt.Sprintf("• `%slogout` - Putuskan tautan akun dari nomor ini\n\n", prefix))
 	sb.WriteString(fmt.Sprintf("🔗 Portal Lab: %s", webURL))
 	return sb.String()
@@ -688,7 +693,7 @@ func FormatLogoutSuccess(u *asciiapi.UserInfo) string {
 	var sb strings.Builder
 	sb.WriteString("🚪 *LOGOUT BERHASIL*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	sb.WriteString(fmt.Sprintf("Tautan akun *%s* (%s) dengan nomor WhatsApp ini telah berhasil dilepas.\n\n", u.Name, u.Username))
+	sb.WriteString(fmt.Sprintf("Tautan akun *%s* (%s) dengan WhatsApp ini telah berhasil dilepas.\n\n", u.Name, u.Username))
 	sb.WriteString("Ketik `!login <NIM> <password>` kapan saja jika ingin menghubungkan kembali akun Anda.\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	return sb.String()
@@ -700,7 +705,7 @@ func FormatProfile(u *asciiapi.UserInfo, prefix, webURL string) string {
 	if u == nil {
 		sb.WriteString("ℹ️ *BELUM ADA AKUN TERHUBUNG*\n")
 		sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-		sb.WriteString("Nomor WhatsApp ini belum tertaut dengan akun di portal praktikum ASCII.\n\n")
+		sb.WriteString("WhatsApp ini belum tertaut dengan akun di portal praktikum ASCII.\n\n")
 		sb.WriteString("🔐 *Cara Menghubungkan Akun:*\n")
 		sb.WriteString(fmt.Sprintf("Ketik: `%slogin <NIM> <password>`\n", prefix))
 		sb.WriteString(fmt.Sprintf("Contoh: `%slogin 2101552001 Password123`\n\n", prefix))
@@ -709,7 +714,7 @@ func FormatProfile(u *asciiapi.UserInfo, prefix, webURL string) string {
 		return sb.String()
 	}
 
-	sb.WriteString("👤 *PROFIL AKUN TERTUT*\n")
+	sb.WriteString("👤 *PROFIL AKUN TERTAUT*\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	sb.WriteString(fmt.Sprintf("• *Nama:* %s\n", u.Name))
 	sb.WriteString(fmt.Sprintf("• *NIM / Username:* %s\n", u.Username))
@@ -717,10 +722,13 @@ func FormatProfile(u *asciiapi.UserInfo, prefix, webURL string) string {
 	if u.Email != "" {
 		sb.WriteString(fmt.Sprintf("• *Email:* %s\n", u.Email))
 	}
-	sb.WriteString(fmt.Sprintf("• *Nomor WhatsApp:* +%s (🟢 Aktif)\n\n", u.PhoneNumber))
+	if u.PhoneNumber != "" && !strings.HasPrefix(u.PhoneNumber, "15") && len(u.PhoneNumber) <= 14 {
+		sb.WriteString(fmt.Sprintf("• *Nomor HP Terdaftar:* +%s\n", u.PhoneNumber))
+	}
+	sb.WriteString("• *Status WhatsApp:* 🟢 Terhubung & Aktif\n\n")
 
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	sb.WriteString(fmt.Sprintf("• Ketik `%sbimbingan` untuk melihat data bimbingan.\n", prefix))
+	sb.WriteString(fmt.Sprintf("• Ketik `1` atau `%sbimbingan` untuk melihat data bimbingan.\n", prefix))
 	sb.WriteString(fmt.Sprintf("• Ketik `%slogout` untuk memutuskan tautan akun dari nomor ini.\n", prefix))
 	return sb.String()
 }

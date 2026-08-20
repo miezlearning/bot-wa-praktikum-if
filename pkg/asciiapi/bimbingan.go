@@ -86,13 +86,26 @@ func (c *Client) getDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to open sqlite db: %w", err)
 	}
 
+	// Ensure session mapping table exists for WhatsApp LID and phone numbers
+	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS bot_wa_sessions (
+			sender_id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES user(id) ON DELETE CASCADE
+		);
+		UPDATE user SET phone_number = NULL WHERE phone_number LIKE '15%' AND length(phone_number) >= 14;
+	`)
+
 	return db, nil
 }
 
-// FindUserByPhone finds a user by normalized phone number
+// FindUserByPhone finds a user by normalized phone number or WhatsApp LID session
 func (c *Client) FindUserByPhone(phone string) (*UserInfo, error) {
 	norm := NormalizePhoneNumber(phone)
-	if norm == "" {
+	raw := strings.TrimSpace(phone)
+	if raw == "" && norm == "" {
 		return nil, fmt.Errorf("nomor telepon kosong atau tidak valid")
 	}
 
@@ -102,22 +115,38 @@ func (c *Client) FindUserByPhone(phone string) (*UserInfo, error) {
 	}
 	defer db.Close()
 
-	// Candidate phone formats in DB: "628...", "08...", "+628..."
+	var u UserInfo
+
+	// 1. Check in bot_wa_sessions first (supports WhatsApp LID and linked phones)
+	sessionQuery := `
+		SELECT u.id, u.name, u.email, COALESCE(u.username, ''), u.role, COALESCE(u.phone_number, '')
+		FROM bot_wa_sessions s
+		JOIN user u ON s.user_id = u.id
+		WHERE s.sender_id = ? OR s.sender_id = ?
+		LIMIT 1
+	`
+	err = db.QueryRow(sessionQuery, raw, norm).Scan(
+		&u.ID, &u.Name, &u.Email, &u.Username, &u.Role, &u.PhoneNumber,
+	)
+	if err == nil {
+		return &u, nil
+	}
+
+	// 2. Check candidate phone formats in DB: "628...", "08...", "+628..."
 	var localFormat string
 	if strings.HasPrefix(norm, "62") {
 		localFormat = "0" + norm[2:]
 	}
+	plusFormat := "+" + norm
 
 	query := `
 		SELECT id, name, email, COALESCE(username, ''), role, COALESCE(phone_number, '')
 		FROM user
-		WHERE phone_number = ? OR phone_number = ? OR phone_number = ?
+		WHERE phone_number = ? OR phone_number = ? OR phone_number = ? OR phone_number = ?
 		LIMIT 1
 	`
-	plusFormat := "+" + norm
 
-	var u UserInfo
-	err = db.QueryRow(query, norm, localFormat, plusFormat).Scan(
+	err = db.QueryRow(query, norm, localFormat, plusFormat, raw).Scan(
 		&u.ID, &u.Name, &u.Email, &u.Username, &u.Role, &u.PhoneNumber,
 	)
 	if err != nil {
@@ -366,6 +395,10 @@ func (c *Client) scanGroupsWithMembers(db *sql.DB, rows *sql.Rows) ([]BimbinganG
 			g.ShortID = g.ID
 		}
 
+		if strings.HasPrefix(g.AslabPhoneNumber, "15") && len(g.AslabPhoneNumber) >= 14 {
+			g.AslabPhoneNumber = ""
+		}
+
 		groups = append(groups, g)
 		groupIDs = append(groupIDs, g.ID)
 	}
@@ -420,6 +453,9 @@ func (c *Client) fetchMembersForGroups(db *sql.DB, groupIDs []string) (map[strin
 		var m BimbinganMemberItem
 		if err := rows.Scan(&m.ID, &m.GroupID, &m.UserID, &m.NIM, &m.Nama, &m.Role, &m.PhoneNumber); err != nil {
 			continue
+		}
+		if strings.HasPrefix(m.PhoneNumber, "15") && len(m.PhoneNumber) >= 14 {
+			m.PhoneNumber = ""
 		}
 		res[m.GroupID] = append(res[m.GroupID], m)
 	}
@@ -699,16 +735,20 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 		_ = json.Unmarshal(respBytes, &authUser)
 	}
 
-	// 2. If API request succeeded, save phone number to database
+	// 2. If API request succeeded, save phone number and session to database
 	var matchedUser UserInfo
 	if authUser.User.ID != "" {
+		realPhone := authUser.User.PhoneNumber
+		if realPhone == "" && (strings.HasPrefix(norm, "628") || strings.HasPrefix(norm, "08")) {
+			realPhone = norm
+		}
 		matchedUser = UserInfo{
 			ID:          authUser.User.ID,
 			Name:        authUser.User.Name,
 			Email:       authUser.User.Email,
 			Username:    authUser.User.Username,
 			Role:        authUser.User.Role,
-			PhoneNumber: norm,
+			PhoneNumber: realPhone,
 		}
 	} else {
 		// Fallback: If web server is unreachable or returned error, check error message
@@ -728,11 +768,30 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 		return nil, fmt.Errorf("autentikasi gagal. Periksa kembali NIM dan password Anda")
 	}
 
-	// 3. Link phone number in local database if available
+	// 3. Link session in local database
 	db, dbErr := c.getDB()
 	if dbErr == nil {
 		defer db.Close()
-		_, _ = db.Exec("UPDATE user SET phone_number = ?, updated_at = ? WHERE id = ?", norm, time.Now().UnixMilli(), matchedUser.ID)
+		now := time.Now().UnixMilli()
+		raw := strings.TrimSpace(senderPhone)
+
+		_, _ = db.Exec(`
+			INSERT INTO bot_wa_sessions (sender_id, user_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at
+		`, raw, matchedUser.ID, now, now)
+
+		if norm != "" && norm != raw {
+			_, _ = db.Exec(`
+				INSERT INTO bot_wa_sessions (sender_id, user_id, created_at, updated_at)
+				VALUES (?, ?, ?, ?)
+				ON CONFLICT(sender_id) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at
+			`, norm, matchedUser.ID, now, now)
+		}
+
+		if matchedUser.PhoneNumber != "" && !strings.HasPrefix(matchedUser.PhoneNumber, "15") {
+			_, _ = db.Exec("UPDATE user SET phone_number = ?, updated_at = ? WHERE id = ? AND (phone_number IS NULL OR phone_number = '' OR phone_number LIKE '15%')", matchedUser.PhoneNumber, now, matchedUser.ID)
+		}
 	}
 
 	return &matchedUser, nil
@@ -741,11 +800,9 @@ func (c *Client) LoginUser(senderPhone, nim, password string) (*UserInfo, error)
 // LogoutUser removes the WhatsApp link for the sender's phone number
 func (c *Client) LogoutUser(senderPhone string) (*UserInfo, error) {
 	norm := NormalizePhoneNumber(senderPhone)
-	if norm == "" {
-		return nil, fmt.Errorf("nomor WhatsApp pengirim tidak valid")
-	}
+	raw := strings.TrimSpace(senderPhone)
 
-	caller, err := c.FindUserByPhone(norm)
+	caller, err := c.FindUserByPhone(senderPhone)
 	if err != nil {
 		return nil, err
 	}
@@ -759,19 +816,11 @@ func (c *Client) LogoutUser(senderPhone string) (*UserInfo, error) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("UPDATE user SET phone_number = NULL, updated_at = ? WHERE id = ?", time.Now().UnixMilli(), caller.ID)
-	if err != nil {
-		return nil, fmt.Errorf("gagal melepas tautan akun di database: %w", err)
-	}
-
+	_, _ = db.Exec("DELETE FROM bot_wa_sessions WHERE sender_id = ? OR sender_id = ?", raw, norm)
 	return caller, nil
 }
 
 // GetProfile retrieves the profile linked to the sender's WhatsApp phone number
 func (c *Client) GetProfile(senderPhone string) (*UserInfo, error) {
-	norm := NormalizePhoneNumber(senderPhone)
-	if norm == "" {
-		return nil, fmt.Errorf("nomor WhatsApp pengirim tidak valid")
-	}
-	return c.FindUserByPhone(norm)
+	return c.FindUserByPhone(senderPhone)
 }
